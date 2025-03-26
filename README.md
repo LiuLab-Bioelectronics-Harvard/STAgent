@@ -1,13 +1,16 @@
 # STAgent
-## Overview  
-STAgent is a multimodal large language model (LLM)-based AI agent that automates...
 
+## Overview  
+**STAgent** is a multimodal large language model (LLM)-based AI agent that automates spatial transcriptomics analysis from raw data to deep scientific insights. Built for end-to-end research autonomy, STAgent integrates advanced vision-language models, dynamic code generation, contextualized literature integration, and structured report synthesis to streamline complex spatial biology workflows. It removes the need for manual programming or domain-specific expertise, enabling rapid, reproducible, and interpretable discoveries in tissue biology.
 
 ## Features  
-- **End-to-End Automation** –   
-- **Multimodal Interaction** – Supports text, voice, and image-based inputs.  
-- **Autonomous Reasoning** – Uses LLMs and coding functions to optimize sorting without human intervention.  
-- **Interpretable Results** – Generates detailed reports explaining sorting decisions.  
+- **End-to-End Automation** – Transforms raw spatial transcriptomics data into comprehensive, publication-style research reports without human intervention. From image preprocessing to biological interpretation, STAgent autonomously executes the full analytical pipeline.  
+- **Multimodal Interaction** – Supports text, voice, and image-based inputs, enabling intuitive natural language interfaces for researchers with no computational background.  
+- **Autonomous Reasoning** – Leverages multimodal LLMs to perform visual reasoning on tissue images, generate and execute Python analysis code, interpret spatial maps, and integrate literature insights.  
+- **Interpretable Results** – Produces structured scientific reports with visualizations, key findings, biological implications, and citation-supported context, resembling peer-reviewed publications.  
+- **Context-Aware Gene Analysis** – Performs multimodal enrichment analyses that go beyond statistical significance, focusing on biologically relevant pathways tailored to the tissue context.  
+- **Visual Reasoning Engine** – Analyzes spatial maps and cell architectures directly, detecting subtle morphogenetic patterns and tissue-level changes across timepoints or conditions.  
+- **Scalable Knowledge Synthesis** – Converts spatially resolved gene expression data into coherent scientific narratives, uncovering developmental programs, cellular interactions, and signaling networks.
 
 ## Getting Started
 
@@ -65,4 +68,6 @@ The app will open in your default web browser at the local host.
 4. `conversation_histories_{model}`: these directories contains the conversation history of the agent classfied by the model used. You may load and save the conversation history with the agent.
 
 
-## Citation
+## Citation  
+If you use STAgent in your research, please cite:  
+> *Lin, Z., *Wang, W., et al. Autonomous spatial transcriptomics AI agent charts SC-pancreas maturation in vivo. (2025). _bioRxiv_.
