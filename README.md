@@ -22,7 +22,7 @@
 
 2. Install the dependencies
 
-   We use conda to manage the dependencies and currently only support the Linux system.
+   We use conda to manage the dependencies and we have tested the results on Mac system with apple M2 chip.
 
    ### Mac Users
 
