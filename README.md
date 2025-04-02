@@ -24,7 +24,7 @@
 
    We use conda to manage the dependencies and currently only support the Linux system.
 
-   ### Linux Users
+   ### Mac Users
 
    ```bash
    # Create the environment from the file
