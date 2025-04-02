@@ -1,30 +1,62 @@
 # STAgent
 
-## Overview  
-**STAgent** is a multimodal large language model (LLM)-based AI agent that automates spatial transcriptomics analysis from raw data to deep scientific insights. Built for end-to-end research autonomy, STAgent integrates advanced vision-language models, dynamic code generation, contextualized literature integration, and structured report synthesis to streamline complex spatial biology workflows. It removes the need for manual programming or domain-specific expertise, enabling rapid, reproducible, and interpretable discoveries in tissue biology.
+[![GitHub stars](https://img.shields.io/github/stars/LiuLab-Bioelectronics-Harvard/STAgent)](https://github.com/LiuLab-Bioelectronics-Harvard/STAgent/stargazers)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-## Features  
-- **End-to-End Automation** – Transforms raw spatial transcriptomics data into comprehensive, publication-style research reports without human intervention. From image preprocessing to biological interpretation, STAgent autonomously executes the full analytical pipeline.  
-- **Multimodal Interaction** – Supports text, voice, and image-based inputs, enabling intuitive natural language interfaces for researchers with no computational background.  
-- **Autonomous Reasoning** – Leverages multimodal LLMs to perform visual reasoning on tissue images, generate and execute Python analysis code, interpret spatial maps, and integrate literature insights.  
-- **Interpretable Results** – Produces structured scientific reports with visualizations, key findings, biological implications, and citation-supported context, resembling peer-reviewed publications.  
-- **Context-Aware Gene Analysis** – Performs multimodal enrichment analyses that go beyond statistical significance, focusing on biologically relevant pathways tailored to the tissue context.  
-- **Visual Reasoning Engine** – Analyzes spatial maps and cell architectures directly, detecting subtle morphogenetic patterns and tissue-level changes across timepoints or conditions.  
-- **Scalable Knowledge Synthesis** – Converts spatially resolved gene expression data into coherent scientific narratives, uncovering developmental programs, cellular interactions, and signaling networks.
+## Overview
+**STAgent** is a multimodal large language model (LLM)-based AI agent that automates spatial transcriptomics analysis from data to deep scientific insights. Built for end-to-end research autonomy, STAgent integrates:
 
-## Getting Started
+- Advanced vision-language models
+- Dynamic code generation
+- Contextualized literature integration
+- Structured report synthesis
 
-1. Clone the repository
+STAgent streamlines complex spatial biology workflows, removing the need for manual programming or domain-specific expertise. This enables rapid, reproducible, and interpretable discoveries in tissue biology.
+
+## Demo
+
+Check out our [demo video](https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ) to see STAgent in action.
+
+## Features
+
+### End-to-End Automation
+Transforms spatial transcriptomics data into comprehensive, publication-style research reports without human intervention. STAgent autonomously executes the full analytical pipeline from image preprocessing to biological interpretation.
+
+### Multimodal Interaction
+Supports text, voice, and image-based inputs, enabling intuitive natural language interfaces for researchers with no computational background.
+
+### Autonomous Reasoning
+Leverages multimodal LLMs to perform visual reasoning on tissue images, generate and execute Python analysis code, interpret spatial maps, and integrate literature insights.
+
+### Interpretable Results
+Produces structured scientific reports with methods, key findings, biological implications, and citation-supported context, resembling peer-reviewed publications.
+
+### Context-Aware Gene Analysis
+Performs multimodal enrichment analyses that go beyond statistical significance, focusing on biologically relevant pathways tailored to the tissue context.
+
+### Visual Reasoning Engine
+Analyzes spatial maps and cell architectures directly, detecting subtle morphogenetic patterns and tissue-level changes across timepoints or conditions.
+
+### Scalable Knowledge Synthesis
+Converts spatially resolved gene expression data into coherent scientific narratives, uncovering developmental programs, cellular interactions, and signaling networks.
+
+## Installation
+
+### Prerequisites
+- Python 3.11
+- Conda package manager
+
+### Setup Instructions
+
+1. **Clone the repository**
    ```bash
    git clone https://github.com/LiuLab-Bioelectronics-Harvard/STAgent.git
    cd STAgent
    ```
 
-2. Install the dependencies
+2. **Install dependencies**
 
-   We use conda to manage the dependencies and we have tested the results on Mac system with apple M2 chip.
-
-   ### Mac Users
+   We use conda to manage dependencies and have tested on Mac systems with Apple M2 chips.
 
    ```bash
    # Create the environment from the file
@@ -34,47 +66,63 @@
    conda activate STAgent
    ```
 
-3. Set up your environment variables
+3. **Configure environment variables**
    - Create a `.env` file in the root directory
-   - Add your API key in this file. The API keys needed for this agent are:
-    ```
-    # If you want to use OpenAI models, you need to add the following:
-    OPENAI_API_KEY=<your-openai-api-key-here>
-    WHISPER_API_KEY=<your-whisper-api-key-here>
+   - Add your API keys:
+   
+   ```
+   # OpenAI models (https://platform.openai.com/api-keys)
+   OPENAI_API_KEY=<your-openai-api-key-here>
+   WHISPER_API_KEY=<your-whisper-api-key-here>
 
-    # If you want to use Claude, you need to add the following:
-    ANTHROPIC_API_KEY=<your-anthropic-api-key-here>
+   # Claude models (https://www.anthropic.com/api)
+   ANTHROPIC_API_KEY=<your-anthropic-api-key-here>
 
-    # We use serpapi to perform google scholar search. To enable it, you need to add the following:
-    SERP_API_KEY=<your-serpapi-key-here>
-    ```
+   # Google Scholar search via SerpAPI (https://serpapi.com/)
+   SERP_API_KEY=<your-serpapi-key-here>
+   ```
 
-4. Set the data folder
+4. **Set up the data folder**
 
-   Under ./STAgent, make a directory named "data". Download the .h5ad data from https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ. Put the h5ad file in the ./STAgent/data directory. 
+   ```bash
+   mkdir -p ./STAgent/data
+   ```
+   
+   Download the .h5ad data files from [Google Drive](https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ) and place them in the `./STAgent/data` directory.
 
-5. Run the app
+## Usage
+
+1. **Launch the application**
    ```bash
    streamlit run src/unified_app.py
    ```
+   The app will open in your default web browser at the local host.
 
-6. Perform end-to-end analysis
+2. **Interact with the agent**
+   - Select a model (claude-3.7-sonnet recommended)
+   - You can start interacting with the agent by typing messages in the chat interface
+   - Example prompts you can try:
+   ```
+   "Can you help me perform an end-to-end analysis on my spatial transcriptomic datasets. Please also generate a report."
+   ```
+   - The agent will respond to your queries and can perform complex analyses based on natural language instructions
 
-   After selecting the model (claude 3.7 sonnet recommende). Perform the end-to-end analysis by typing the following messeage in the chat interface:
-   "
-   Can you help me perform an end-to-end analysis on my spatial transcriptomic datasets. Please also generate a report.
-   "
+## Project Structure
 
+- `src/`: Contains the source code for STAgent
+- `data/`: Directory for storing spatial transcriptomics datasets
+- `src/tmp/plots/`: Contains plots generated by the agent
+- `conversation_histories_{model}/`: Stores conversation history classified by model
 
-The app will open in your default web browser at the local host.
+## Example Output
 
-## Usage
-1. `src`: this directory contains the source code of the STAgent.
-2. `data`: this directory can be used to hold the data. You can unzip the data files and testing with our agent.
-3. `src/tmp/plots`: this directory contains the plots generated by the agent.
-4. `conversation_histories_{model}`: these directories contains the conversation history of the agent classfied by the model used. You may load and save the conversation history with the agent.
+When you prompt the agent to perform an end-to-end analysis, it generates a comprehensive markdown report (one example output is "STAgent_generated_report.md"). 
 
+<!-- Add example output images here when available -->
 
-## Citation  
-If you use STAgent in your research, please cite:  
+## Citation
+If you use STAgent in your research, please cite:
 > *Lin, Z., *Wang, W., et al. Spatial transcriptomics AI agent charts hPSC-pancreas maturation in vivo. (2025). _bioRxiv_.
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
