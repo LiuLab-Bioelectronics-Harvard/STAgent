@@ -13,7 +13,7 @@
 
 STAgent streamlines complex spatial biology workflows, removing the need for manual programming or domain-specific expertise. This enables rapid, reproducible, and interpretable discoveries in tissue biology.
 
-![STAgent Architecture](./assets/images/stagent_architecture.png)
+<img src="./assets/images/stagent_architecture.png" style="width: 600px; max-width: 100%;" alt="STAgent Architecture">
 
 ## Demo
 
