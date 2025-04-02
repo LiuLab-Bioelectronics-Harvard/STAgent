@@ -49,7 +49,10 @@
     SERP_API_KEY=<your-serpapi-key-here>
     ```
 
-4. Run the app
+4. Set the data folder
+   under ./STAgent, make a directory named "data". Download the .h5ad data from https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ. Put the h5ad file in the ./STAgent/data directory. 
+
+5. Run the app
    ```bash
    streamlit run src/unified_app.py
    ```
