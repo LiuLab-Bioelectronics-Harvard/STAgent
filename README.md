@@ -50,12 +50,20 @@
     ```
 
 4. Set the data folder
+
    under ./STAgent, make a directory named "data". Download the .h5ad data from https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ. Put the h5ad file in the ./STAgent/data directory. 
 
 5. Run the app
    ```bash
    streamlit run src/unified_app.py
    ```
+
+6. Perform end-to-end analysis
+   After selecting the model (claude 3.7 sonnet recommende). Perform the end-to-end analysis by typing the following messeage in the chat interface:
+   "
+   Can you help me perform an end-to-end analysis on my spatial transcriptomic datasets. Please also generate a report.
+   "
+
 
 The app will open in your default web browser at the local host.
 
