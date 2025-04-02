@@ -28,10 +28,10 @@
 
    ```bash
    # Create the environment from the file
-   conda env create -f environment.linux.yml
+   conda env create -f environment.yml
    
    # Activate the environment
-   conda activate stagent
+   conda activate STAgent
    ```
 
 3. Set up your environment variables
@@ -39,22 +39,17 @@
    - Add your API key in this file. The API keys needed for this agent are:
     ```
     # If you want to use OpenAI models, you need to add the following:
-    OPENAI_API_KEY=your-api-key-here
-    OPENAI_API_BASE=your-api-base-here
-    WHISPER_API_KEY=your-whisper-api-key-here
+    OPENAI_API_KEY=<your-openai-api-key-here>
+    WHISPER_API_KEY=<your-whisper-api-key-here>
 
     # If you want to use Claude, you need to add the following:
-    ANTHROPIC_API_KEY=your-anthropic-api-key-here
+    ANTHROPIC_API_KEY=<your-anthropic-api-key-here>
 
-    # If you want to use Gemini, you need to add the following:
-    GOOGLE_API_KEY=your-google-api-key-here
+    # We use serpapi to perform google scholar search. To enable it, you need to add the following:
+    SERP_API_KEY=<your-serpapi-key-here>
     ```
 
-4. (Optional) Modify the default parameters in `src/Agent/default.py`
-    
-    You may also directly share parameters with the agent and our agent will set them for you. 
-
-5. Run the app
+4. Run the app
    ```bash
    streamlit run src/unified_app.py
    ```
@@ -70,4 +65,4 @@ The app will open in your default web browser at the local host.
 
 ## Citation  
 If you use STAgent in your research, please cite:  
-> *Lin, Z., *Wang, W., et al. Autonomous spatial transcriptomics AI agent charts SC-pancreas maturation in vivo. (2025). _bioRxiv_.
+> *Lin, Z., *Wang, W., et al. Spatial transcriptomics AI agent charts hPSC-pancreas maturation in vivo. (2025). _bioRxiv_.
