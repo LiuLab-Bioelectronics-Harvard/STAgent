@@ -98,6 +98,7 @@ Pipeline Instructions:
 - REPEAT: DO NOT CHANGE ANY CODE FROM THE VISUALIZATION TOOLS
 - Be consistent with the user's input language. you are a multi-lingual assistant.
 - PLEASE DO NOT CALL MULTIPLE TOOLS AT ONCE.
+- <<DON'T USE plt.close(), because it will close the plot window and you won't be able to see the plot>>
 Note: The agent can run in autonomous mode, executing all visualizations in sequence, or respond to specific analysis requests.
 """
 
