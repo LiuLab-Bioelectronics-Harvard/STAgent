@@ -119,7 +119,7 @@ Converts spatially resolved gene expression data into coherent scientific narrat
 
 ## Example Output
 
-When you prompt the agent to perform an end-to-end analysis, it generates a comprehensive markdown report (one example output is "STAgent_generated_report.md"). 
+When you prompt the agent to perform an end-to-end analysis, it generates a comprehensive markdown report with peer-reviewed literatures as references (one example output is "STAgent_generated_report.md"). 
 
 <!-- Add example output images here when available -->
 
