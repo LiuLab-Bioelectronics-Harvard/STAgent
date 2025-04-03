@@ -212,8 +212,6 @@ def visualize_spatial_cell_type_map() -> str:
         import pandas as pd
         import matplotlib.pyplot as plt
         import os
-        # Create output directory if it doesn't exist
-        os.makedirs('output', exist_ok=True)
         # Load data
         data_path = './data/pancreas_processed_full.h5ad'
         adata = ad.read_h5ad(data_path)
