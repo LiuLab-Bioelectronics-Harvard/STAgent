@@ -20,41 +20,9 @@ from io import StringIO
 from typing import Dict, Optional
 from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
-
-
-
 load_dotenv()
 
 # Google Scholar Tool
-# class GoogleScholarAPI:
-#     def __init__(self, serp_api_key: str = None, top_k_results: int = 10, hl: str = "en", lr: str = "lang_en"):
-#         self.serp_api_key = serp_api_key or os.environ.get("SERP_API_KEY")
-#         self.top_k_results = top_k_results
-#         self.hl = hl
-#         self.lr = lr
-
-#     def run(self, query: str) -> str:
-#         if not self.serp_api_key:
-#             return "API key missing for Google Scholar search."
-#         params = {
-#             "engine": "google_scholar",
-#             "q": query,
-#             "api_key": self.serp_api_key,
-#             "hl": self.hl,
-#             "lr": self.lr,
-#             "num": min(self.top_k_results, 20),
-#         }
-#         search = GoogleSearch(params)
-#         results = search.get_dict().get("organic_results", [])
-#         if not results:
-#             return "No good Google Scholar Result was found."
-#         return "\n\n".join([
-#             f"Title: {result.get('title', '')}\nAuthors: {', '.join([a.get('name') for a in result.get('publication_info', {}).get('authors', [])])}\nSummary: {result.get('snippet', '')}"
-#             for result in results
-#         ])
-
-# google_scholar = GoogleScholarAPI()
-
 class GoogleScholarAPI:
     def __init__(self, serp_api_key: str = None, top_k_results: int = 40, hl: str = "en", lr: str = "lang_en"):
         self.serp_api_key = serp_api_key or os.environ.get("SERP_API_KEY")
@@ -260,7 +228,6 @@ def visualize_spatial_cell_type_map() -> str:
     return dedent(code)
 
 
-
 @tool
 def visualize_cell_type_composition() -> str:
     """
@@ -400,6 +367,8 @@ def visualize_umap() -> str:
     <<<REPEAT: PLEASE DON'T CHANGE THE CODE. AND YOU SHOULD USE THE `python_repl_tool` TO EXECUTE THE CODE. But you can fix the bugs>>>
     """
     return dedent(code)
+
+
 @tool
 def report_tool(state: Annotated[Dict, InjectedState], query: str) -> str:
     """Generates a comprehensive scientific report based on the conversation history.
