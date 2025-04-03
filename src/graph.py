@@ -131,7 +131,9 @@ def _call_model(state: GraphsState, config: RunnableConfig) -> Command[Literal["
                 3. Explain the biological implications of the observations if any.
                 4. You should use google scholar to find more information to see if the literature supports your observation. 
                 5. please always do multiple search queries (at least 5) to get a better understanding of the observation.
-                6. After you finish your writing, please continue to the next steps according to the system instructions.
+                6. After you finish your writing, please continue to the next steps according to the system instructions. unless user shows intention for interaction or you are not sure about the next step.
+                7. Remember to be consistent with the user's input language. you are a multi-lingual assistant.
+                8. If you don't see any plots, or the plots are not clear or crowded, please try to fix the code. if you want to see the plots then don't use plt.close"
             """
         }]
         
