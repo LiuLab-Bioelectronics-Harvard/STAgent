@@ -170,7 +170,6 @@ def visualize_cell_cell_interaction_tool() -> str:
         a = enrichment_dict[sample_i].reindex(index=input_list, columns=input_list)
         ax = sns.heatmap(a, vmax=30, vmin=-30, cmap='RdBu_r', annot=True, fmt=".1f")		
         ax.set_title('cell_type neighborhood enrichment of {{}}'.format(sample_i))
-        plt.savefig(f'cell_type_neighborhood_enrichment_{{sample_i}}_RdBu_r.eps', bbox_inches='tight')
         plt.show()
 
     # Please use python_repl_tool to execute the above code directly. IMPORTANT: PLEASE DON'T CHANGE THE CODE.
@@ -251,8 +250,6 @@ def visualize_spatial_cell_type_map() -> str:
             ax.set_ylabel('Spatial Y')
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
             plt.tight_layout()
-            # Save figure
-            plt.savefig(f'output/spatial_distribution_{{slice_id}}.png', bbox_inches='tight', dpi=200)
             plt.show()
     # Please use python_repl_tool to execute this code directly. IMPORTANT: PLEASE DON'T CHANGE THE CODE.
     <<<REPEAT: PLEASE DON'T CHANGE THE CODE. AND YOU SHOULD USE THE `python_repl_tool` TO EXECUTE THE CODE. But you can fix the bugs>>>
@@ -484,7 +481,8 @@ def report_tool(state: Annotated[Dict, InjectedState], query: str) -> str:
     try:
         # Save as markdown file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        md_filename = f'spatial_transcriptomics_report_{timestamp}.md'
+        os.makedirs('output_report', exist_ok=True)
+        md_filename = f'./output_report/spatial_transcriptomics_report_{timestamp}.md'
         
         with open(md_filename, 'w', encoding='utf-8') as f:
             f.write(report.content)
