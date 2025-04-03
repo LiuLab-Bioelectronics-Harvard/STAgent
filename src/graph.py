@@ -51,7 +51,7 @@ def python_repl_tool(query: str) -> Tuple[str, List[str]]:
                 # Convert to absolute path for saving
                 abs_path = os.path.join(os.path.dirname(__file__), rel_path)
                 
-                fig.savefig(abs_path)
+                fig.savefig(abs_path,bbox_inches='tight')
                 plot_paths.append(rel_path)  # Store relative path
             
             plt.close("all")
