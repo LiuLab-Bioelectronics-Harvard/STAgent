@@ -76,6 +76,7 @@ Converts spatially resolved gene expression data into coherent scientific narrat
    OPENAI_API_KEY=<your-openai-api-key-here>
    WHISPER_API_KEY=<your-whisper-api-key-here>
    (Note: OPENAI_API_KEY is the same as WHISPER_API_KEY)
+
    # Claude models (https://www.anthropic.com/api)
    ANTHROPIC_API_KEY=<your-anthropic-api-key-here>
 
