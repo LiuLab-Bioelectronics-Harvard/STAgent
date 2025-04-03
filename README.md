@@ -83,6 +83,7 @@ Converts spatially resolved gene expression data into coherent scientific narrat
    # Google Scholar search via SerpAPI (https://serpapi.com/)
    SERP_API_KEY=<your-serpapi-key-here>
    ```
+💡 Important: Make sure your API accounts have sufficient balance or credits available, otherwise the agent may not function properly.
 
 4. **Set up the data folder**
 
