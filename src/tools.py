@@ -78,7 +78,10 @@ class GoogleScholarAPI:
         if not results:
             return "No good Google Scholar Result was found."
         return "\n\n".join([
-            f"Title: {result.get('title', '')}\nAuthors: {', '.join([a.get('name') for a in result.get('publication_info', {}).get('authors', [])])}\nSummary: {result.get('snippet', '')}"
+            f"Title: {result.get('title', '')}\n"
+            f"Authors: {', '.join([a.get('name') for a in result.get('publication_info', {}).get('authors', [])])}\n"
+            f"Summary: {result.get('snippet', '')}\n"
+            f"Link: {result.get('link', '')}"
             for result in results
         ])
 
