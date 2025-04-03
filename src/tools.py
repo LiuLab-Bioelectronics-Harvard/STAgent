@@ -61,6 +61,7 @@ def google_scholar_search(query: str) -> str:
     """Searches Google Scholar for the provided query."""
     return google_scholar.run(query)
 
+
 @tool
 def visualize_cell_cell_interaction_tool() -> str:
     """
@@ -294,6 +295,7 @@ def visualize_cell_type_composition() -> str:
     <<<DO NOT CHANGE ANY OF THE CODE FROM THE OUTPUT OF THE `visualize_cell_type_composition`>>>
     """
     return dedent(code)
+
 
 @tool
 def visualize_umap() -> str:
