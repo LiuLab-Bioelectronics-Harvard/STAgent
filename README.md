@@ -69,14 +69,13 @@ Converts spatially resolved gene expression data into coherent scientific narrat
    ```
 
 3. **Configure environment variables**
-   - Create a `.env` file in the root directory
-   - Add your API keys:
+   - modify the `.env` file (src/.env) with your own API keys:
    
    ```
    # OpenAI models (https://platform.openai.com/api-keys)
    OPENAI_API_KEY=<your-openai-api-key-here>
    WHISPER_API_KEY=<your-whisper-api-key-here>
-
+   (Note: OPENAI_API_KEY is the same as WHISPER_API_KEY)
    # Claude models (https://www.anthropic.com/api)
    ANTHROPIC_API_KEY=<your-anthropic-api-key-here>
 
@@ -87,10 +86,10 @@ Converts spatially resolved gene expression data into coherent scientific narrat
 4. **Set up the data folder**
 
    ```bash
-   mkdir -p ./STAgent/data
+   mkdir -p data
    ```
    
-   Download the .h5ad data files from [Google Drive](https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ) and place them in the `./STAgent/data` directory.
+   Download the .h5ad data files from [Google Drive](https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ) and place them in the `./data` directory.
 
 ## Usage
 
