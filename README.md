@@ -17,7 +17,7 @@ STAgent streamlines complex spatial biology workflows, removing the need for man
 
 ## Demo
 
-Check out our [demo video](https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ) to see STAgent in action.
+Check out our [demo video](https://www.youtube.com/watch?v=aEUop05RINY&t=2s) to see STAgent in action.
 
 ## Features
 
@@ -126,6 +126,7 @@ When you prompt the agent to perform an end-to-end analysis, it generates a comp
 ## Citation
 If you use STAgent in your research, please cite:
 > *Lin, Z., *Wang, W., et al. Spatial transcriptomics AI agent charts hPSC-pancreas maturation in vivo. (2025). _bioRxiv_.
+> https://www.biorxiv.org/content/10.1101/2025.04.01.646731v1
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
