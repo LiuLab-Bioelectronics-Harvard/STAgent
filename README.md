@@ -23,8 +23,6 @@ STAgent is part of a broader AI agent ecosystem we developed for specialized bio
 
 SpikeAgent is described in our recent preprint: [https://www.biorxiv.org/content/10.1101/2025.02.11.637754v1](https://www.biorxiv.org/content/10.1101/2025.02.11.637754v1)
 
-Together, these specialized agents represent our commitment to developing agentic AI solutions that democratize complex biological data analysis, enabling researchers to derive meaningful insights without extensive computational expertise.
-
 ## Demo
 
 Check out our [demo video](https://www.youtube.com/watch?v=aEUop05RINY&t=2s) to see STAgent in action.
