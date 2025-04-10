@@ -3,6 +3,8 @@
 [![GitHub stars](https://img.shields.io/github/stars/LiuLab-Bioelectronics-Harvard/STAgent)](https://github.com/LiuLab-Bioelectronics-Harvard/STAgent/stargazers)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
+https://doi.org/10.1101/2025.04.01.646731
+
 ## Overview
 **STAgent** is a multimodal large language model (LLM)-based AI agent that automates spatial transcriptomics analysis from data to deep scientific insights. Built for end-to-end research autonomy, STAgent integrates:
 
@@ -14,6 +16,14 @@
 STAgent streamlines complex spatial biology workflows, removing the need for manual programming or domain-specific expertise. This enables rapid, reproducible, and interpretable discoveries in tissue biology.
 
 <img src="./assets/images/stagent_architecture.png" style="width: 600px; max-width: 100%;" alt="STAgent Architecture">
+
+## Related Work
+
+STAgent is part of a broader AI agent ecosystem we developed for specialized biological data analysis. A complementary tool in this ecosystem is [SpikeAgent](https://github.com/LiuLab-Bioelectronics-Harvard/SpikeAgent.git), which focuses on neuronal electrophysiology data. While STAgent specializes in spatial transcriptomics to reveal tissue architecture and gene expression patterns, SpikeAgent automates the analysis of neuronal firing patterns and network dynamics from electrophysiological recordings.
+
+SpikeAgent is described in our recent preprint: [https://www.biorxiv.org/content/10.1101/2025.02.11.637754v1](https://www.biorxiv.org/content/10.1101/2025.02.11.637754v1)
+
+Together, these specialized agents represent our commitment to developing agentic AI solutions that democratize complex biological data analysis, enabling researchers to derive meaningful insights without extensive computational expertise.
 
 ## Demo
 
