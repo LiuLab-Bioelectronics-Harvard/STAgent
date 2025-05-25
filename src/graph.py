@@ -89,11 +89,10 @@ class GraphsState(TypedDict):
 graph = StateGraph(GraphsState)
 
 gpt_4o = ChatOpenAI(model_name="gpt-4o", temperature=0).bind_tools(tools, parallel_tool_calls=False)
-o1 = ChatOpenAI(model_name="o1").bind_tools(tools, parallel_tool_calls=False)
+
 
 models = {
-    "gpt-4o": gpt_4o,
-    "o1": o1
+    "gpt-4o": gpt_4o
 }
 
 def _call_model(state: GraphsState, config: RunnableConfig) -> Command[Literal["tools", "__end__"]]:

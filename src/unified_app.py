@@ -234,7 +234,7 @@ if page == "OpenAI":
     display_message = display_message_gpt
     render_conversation_history = render_conversation_history_gpt
     get_conversation_summary = get_conversation_summary_gpt
-    available_models = ["gpt-4o", "o1"]
+    available_models = ["gpt-4o"]
 else:  # Anthropic
     HISTORY_DIR = "conversation_histories_anthropic"
     invoke_graph = invoke_anthropic_graph
