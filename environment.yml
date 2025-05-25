@@ -1,4 +1,4 @@
-name: STAgent2
+name: STAgent
 channels:
   - conda-forge
   - defaults
