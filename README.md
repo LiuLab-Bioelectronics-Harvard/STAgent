@@ -5,131 +5,142 @@
 
 https://doi.org/10.1101/2025.04.01.646731
 
+
 ## Overview
-**STAgent** is a multimodal large language model (LLM)-based AI agent that automates spatial transcriptomics analysis from data to deep scientific insights. Built for end-to-end research autonomy, STAgent integrates:
+**STAgent** is a Streamlit-based spatial transcriptomics AI agent for interactive analysis of `.h5ad` datasets. This reviewer-facing package bundles the main application, tool definitions, prompt/configuration logic, and optional external-tool workflows used for STAligner-based spatial domain identification and Tangram-based gene imputation.
 
-- Advanced vision-language models
-- Dynamic code generation
-- Contextualized literature integration
-- Structured report synthesis
-
-STAgent streamlines complex spatial biology workflows, removing the need for manual programming or domain-specific expertise. This enables rapid, reproducible, and interpretable discoveries in tissue biology.
+This clean package is organized to preserve the current app behavior while making installation and review substantially easier than the full development export.
 
 <img src="./assets/images/stagent_architecture.png" style="width: 600px; max-width: 100%;" alt="STAgent Architecture">
 
-## Related Work
-
-STAgent is part of a broader AI agent ecosystem we developed for specialized biological data analysis. A complementary tool in this ecosystem is [SpikeAgent](https://github.com/LiuLab-Bioelectronics-Harvard/SpikeAgent.git), which focuses on neuronal electrophysiology data. While STAgent specializes in spatial transcriptomics to reveal tissue architecture and gene expression patterns, SpikeAgent automates the analysis of neuronal firing patterns and network dynamics from electrophysiological recordings.
-
-SpikeAgent is described in our recent preprint: [https://www.biorxiv.org/content/10.1101/2025.02.11.637754v1](https://www.biorxiv.org/content/10.1101/2025.02.11.637754v1)
-
-## Demo
-
-Check out our [demo video](https://www.youtube.com/watch?v=aEUop05RINY&t=2s) to see STAgent in action.
 
 ## Features
 
 ### End-to-End Automation
-Transforms spatial transcriptomics data into comprehensive, publication-style research reports without human intervention. STAgent autonomously executes the full analytical pipeline from image preprocessing to biological interpretation.
+Guides spatial transcriptomics analysis from data input to final interpretation in a single workflow. STAgent helps organize preprocessing, analysis, visualization, and report generation so researchers can move from raw data to biological insight more efficiently.
+
+### Flexible Pipeline
+Supports a range of analysis needs, from standard exploratory workflows to more specialized tasks to generate dataset or user query-specific pipelines. Researchers can use the core pipeline directly or extend it with optional modules for applications such as cross-sample alignment, gene imputation, and customized downstream analysis.
 
 ### Multimodal Interaction
-Supports text, voice, and image-based inputs, enabling intuitive natural language interfaces for researchers with no computational background.
+Supports text, voice, and image-based inputs, making it easier for researchers to explore datasets in the way that feels most natural. Users can ask questions in plain language without needing advanced programming experience.
 
 ### Autonomous Reasoning
-Leverages multimodal LLMs to perform visual reasoning on tissue images, generate and execute Python analysis code, interpret spatial maps, and integrate literature insights.
+Combines tissue images, spatial gene expression patterns, and user questions to help carry out analysis steps and interpret results. This allows the system to assist with both computational tasks and biological reasoning during data exploration.
+
+### Conflict Checking
+Reviews intermediate conclusions against the broader analysis context and supporting evidence to identify claims that may be inconsistent, uncertain, or overstated. This helps improve the reliability of the final interpretation and encourages more careful biological reasoning.
+
+### Deeper Research Support
+Connects analysis results with relevant literature to provide broader biological context for observed patterns. This helps researchers relate spatial findings to known pathways, cell states, tissue organization, and disease mechanisms.
 
 ### Interpretable Results
-Produces structured scientific reports with methods, key findings, biological implications, and citation-supported context, resembling peer-reviewed publications.
+Produces organized, readable summaries of the analysis, including methods, main findings, and possible biological implications. The outputs are designed to help researchers quickly understand results and communicate them to collaborators.
 
 ### Context-Aware Gene Analysis
-Performs multimodal enrichment analyses that go beyond statistical significance, focusing on biologically relevant pathways tailored to the tissue context.
+Highlights genes and pathways in the context of the tissue, condition, and spatial patterns being studied. This helps prioritize signals that are more likely to be biologically meaningful rather than relying on statistics alone.
 
 ### Visual Reasoning Engine
-Analyzes spatial maps and cell architectures directly, detecting subtle morphogenetic patterns and tissue-level changes across timepoints or conditions.
+Examines spatial maps and tissue organization to identify regions, boundaries, gradients, and other structural patterns. This can help reveal biologically relevant changes across samples, timepoints, or conditions.
 
 ### Scalable Knowledge Synthesis
-Converts spatially resolved gene expression data into coherent scientific narratives, uncovering developmental programs, cellular interactions, and signaling networks.
+Brings together analysis results into a coherent biological story that can support hypothesis generation. STAgent helps connect observed spatial patterns with processes such as cell-cell communication, tissue organization, development, and disease.
+
+
+## Package Contents
+
+- `src/`: main Streamlit app, provider routing, prompts, tool implementations, conflict logging, and report generation.
+- `packages_available/STAligner/`: vendored local STAligner package used by the optional external workflow.
+- `packages_available/open_deep_research/`: vendored deeper-research module used for literature synthesis and report context generation.
+- `environment.yml`: main environment for the Streamlit app and core in-process analysis tools.
+- `environment.gpu.yml`: optional heavier environment for the external STAligner and Tangram workflows.
+- `conversation_histories/`, `research_reports/`, `output_report/`, `src/tmp/plots/`: runtime outputs generated during use.
+
 
 ## Installation
 
-### Prerequisites
-- Python 3.11
-- Conda package manager
+Run all commands from the package root:
 
-### Setup Instructions
+```bash
+cd STAgent_clean
+```
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/LiuLab-Bioelectronics-Harvard/STAgent.git
-   cd STAgent
-   ```
+Create the main application environment:
 
-2. **Install dependencies**
+```bash
+conda env create -f environment.yml
+conda activate STAgent
+```
 
-   We use conda to manage dependencies and have tested on Mac systems with Apple M2 chips.
+If you also want the optional external workflows for STAligner or Tangram, create the secondary environment.
 
-   ```bash
-   # Create the environment from the file
-   conda env create -f environment.yml
-   
-   # Activate the environment
-   conda activate STAgent
-   ```
+```bash
+conda env create -f environment.gpu.yml
+conda activate STAgent_gpusub
+```
 
-3. **Configure environment variables**
-   - modify the `.env` file (src/.env) with your own API keys:
-   
-   ```
-   # OpenAI models (https://platform.openai.com/api-keys)
-   OPENAI_API_KEY=<your-openai-api-key-here>
-   WHISPER_API_KEY=<your-whisper-api-key-here>
-   (Note: OPENAI_API_KEY is the same as WHISPER_API_KEY)
+Then point the app to that interpreter when needed:
 
-   # Claude models (https://www.anthropic.com/api)
-   ANTHROPIC_API_KEY=<your-anthropic-api-key-here>
+```bash
+export STAGENT_GPU_PYTHON_BIN="conda run -n STAgent_gpusub_test python"
+```
 
-   # Google Scholar search via SerpAPI (https://serpapi.com/)
-   SERP_API_KEY=<your-serpapi-key-here>
-   ```
-💡 Important: Make sure your API accounts have sufficient balance or credits available, otherwise the agent may not function properly.
+Notes:
 
-4. **Set up the data folder**
+- If you also want the optional external workflows for STAligner or Tangram, create the secondary environment, please make sure to check your hardware compatibility about gpu, especially the cuda and torch version. For details, refer to https://pytorch.org/get-started/locally/:
+- PyTorch Geometric or GPU acceleration may still require platform-specific follow-up installation, please refer to https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html, and https://github.com/pyg-team/pytorch_geometric?tab=readme-ov-file.
 
-   ```bash
-   mkdir -p data
-   ```
-   
-   Download the .h5ad data files from [Google Drive](https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ) and place them in the `./data` directory.
+## Required and Optional Environment Variables
 
-## Usage
+The app loads environment variables from `src/.env` if present.
 
-1. **Launch the application**
-   ```bash
-   streamlit run src/unified_app.py
-   ```
-   The app will open in your default web browser at the local host.
+Create it safely from the checked-in example template:
 
-2. **Interact with the agent**
-   - Select a model (claude-3.7-sonnet recommended)
-   - You can start interacting with the agent by typing messages in the chat interface
-   - Example prompts you can try:
-   ```
-   "Can you help me perform an end-to-end analysis on my spatial transcriptomic datasets. Please also generate a report."
-   ```
-   - The agent will respond to your queries and can perform complex analyses based on natural language instructions
+```bash
+cp src/.env.example src/.env
+```
 
-## Project Structure
+Then update only the entries you need. The local `src/.env` file is gitignored and should not be committed. See `src/.env.example` for the full list of supported variables.
 
-- `src/`: Contains the source code for STAgent
-- `data/`: Directory for storing spatial transcriptomics datasets
-- `src/tmp/plots/`: Contains plots generated by the agent
-- `conversation_histories_{model}/`: Stores conversation history classified by model
+At minimum, set one provider key for the model family you want to use:
 
-## Example Output
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `GOOGLE_API_KEY`
+- `SERP_API_KEY`: enables Google Scholar retrieval through SerpAPI.
 
-When you prompt the agent to perform an end-to-end analysis, it generates a comprehensive markdown report with peer-reviewed literatures as references (one example output is "STAgent_generated_report.md"). 
+Optional integrations:
 
-<!-- Add example output images here when available -->
+- `WHISPER_API_KEY`: enables voice transcription.
+- `ODR_SEARCH_API`: deeper-research search backend override (`serp`, `openai`, `anthropic`, or `none`).
+- `STAGENT_GPU_PYTHON_BIN`: external interpreter command for STAligner/Tangram workflows.
+- `STAGENT_GPU_TOOL_CWD`: optional working directory for external-tool execution.
+
+Important: Make sure your API accounts have sufficient balance or credits available, otherwise the agent may not function properly.
+
+
+## Running the App
+
+Start the Streamlit interface with the main environment active:
+
+```bash
+streamlit run src/unified_app.py
+```
+
+Download the .h5ad data files from [Google Drive](https://drive.google.com/drive/folders/1RqWGBhCia06-vQnqHUnid63MybQIKwFJ) and place them in the `./data` directory.
+
+## Data and Outputs
+
+- The default configured dataset path is `data/pancreas_processed_full.h5ad` in `src/config.py`.
+- Users can also provide alternative `.h5ad` paths directly in the chat workflow.
+- Generated plots are saved under `src/tmp/plots/`.
+- Conversation histories are saved under `conversation_histories/`.
+- Deeper-research outputs are saved under `research_reports/`.
+- Final reports are saved under `output_report/`.
+
+## Demo
+
+Check out our [demo video](https://www.youtube.com/watch?v=aEUop05RINY&t=2s) to see STAgent in action.
 
 ## Citation
 If you use STAgent in your research, please cite:
@@ -138,3 +149,8 @@ If you use STAgent in your research, please cite:
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+
+## Acknowledgement
+- STAligner package is a fork from https://github.com/zhoux85/STAligner
+- Deeper research module is refactoried from https://github.com/langchain-ai/open_deep_research

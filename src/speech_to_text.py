@@ -2,6 +2,7 @@
 
 import base64
 import os
+from pathlib import Path
 from openai import OpenAI
 from audio_recorder_streamlit import audio_recorder
 import streamlit as st
@@ -9,7 +10,7 @@ from dotenv import load_dotenv
 from typing import Optional
 from st_audiorec import st_audiorec
 # Load environment variables for API credentials
-load_dotenv()
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 # Function to convert audio bytes to text using OpenAI's Whisper model
 def convert_audio_to_text(audio_bytes: bytes) -> Optional[str]:

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Annotated, TypedDict, List, Dict, Any
 from dotenv import load_dotenv
 from git import Repo
@@ -18,7 +19,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 from prompt import spatial_processing_prompt
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 # Configuration
 REPO_PATH = "./packages_available/squidpy"
@@ -39,6 +40,13 @@ class SquidpyRAGTool:
     
     def setup_squidpy_index(self):
         """Setup and index the Squidpy repository for RAG if not already done."""
+        # Avoid import-time hard failures in batch/benchmark contexts.
+        # The embeddings backend requires OPENAI_API_KEY.
+        if not os.getenv("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY is not set. Squidpy RAG indexing requires OpenAI embeddings. "
+                "Set OPENAI_API_KEY or avoid calling squidpy_rag_agent."
+            )
         
         # Clone repo if it doesn't exist
         if not os.path.exists(REPO_PATH):
@@ -169,8 +177,19 @@ class SquidpyRAGTool:
         
         return response["answer"]
 
-# Initialize the Squidpy RAG tool
-squidpy_rag = SquidpyRAGTool()
+_squidpy_rag: SquidpyRAGTool | None = None
+
+
+def _get_squidpy_rag() -> SquidpyRAGTool | None:
+    """Lazy initializer to avoid import-time API key dependency."""
+    global _squidpy_rag
+    if _squidpy_rag is not None:
+        return _squidpy_rag
+    try:
+        _squidpy_rag = SquidpyRAGTool()
+        return _squidpy_rag
+    except Exception:
+        return None
 
 @tool
 def squidpy_rag_agent(state: Annotated[Dict, InjectedState], query: str) -> str:
@@ -190,4 +209,10 @@ def squidpy_rag_agent(state: Annotated[Dict, InjectedState], query: str) -> str:
     #example_answer = squidpy_rag.run(query, chat_history)
     #final_answer = example_answer + "\n\nPlease modify the code based on the current context and use `python_repl_tool` to run the modified code above."
     
-    return squidpy_rag.run(query, chat_history)
+    rag = _get_squidpy_rag()
+    if rag is None:
+        return (
+            "Squidpy RAG is unavailable in this environment. "
+            "Reason: OPENAI_API_KEY is not set (required for embeddings) or the index could not be initialized."
+        )
+    return rag.run(query, chat_history)

@@ -1,19 +1,28 @@
 import base64
 import json
 import os
+from pathlib import Path
+import re
 import streamlit as st
 from dotenv import load_dotenv
+from uuid import uuid4
+from conflict_log import start_conflict_session, get_log as get_conflict_log, get_conflict_path
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, BaseMessage, SystemMessage
-from graph import invoke_our_graph as invoke_gpt_graph
-from graph_anthropic import invoke_our_graph as invoke_anthropic_graph
-from util import display_message as display_message_gpt, render_conversation_history as render_conversation_history_gpt, get_conversation_summary as get_conversation_summary_gpt
-from util_anthropic import display_message as display_message_anthropic, render_conversation_history as render_conversation_history_anthropic, get_conversation_summary as get_conversation_summary_anthropic
+from providers import ProviderFactory, ProviderContext
+from graph_unified import invoke_our_graph
+from util_unified import display_message, render_conversation_history, get_conversation_summary
 from speech_to_text import input_from_mic, convert_text_to_speech
 from datetime import datetime
 from prompt import system_prompt
+from typing import Any
+from trace_log import set_current_trace_id
 
 # Load environment variables
-load_dotenv()
+load_dotenv(Path(__file__).resolve().with_name(".env"))
+
+def make_trace_id() -> str:
+    # Timestamp-prefixed ID so conflict/history filenames are not "random-looking"
+    return f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:10]}"
 
 # Initialize session state if not present
 if "page" not in st.session_state:
@@ -25,6 +34,10 @@ if "final_state" not in st.session_state:
     }
 if "audio_transcription" not in st.session_state:
     st.session_state["audio_transcription"] = None
+if "trace_id" not in st.session_state:
+    st.session_state["trace_id"] = make_trace_id()
+    set_current_trace_id(st.session_state["trace_id"])
+    start_conflict_session(st.session_state["trace_id"])
 
 # Add custom CSS with theme-aware styling
 st.markdown("""
@@ -208,46 +221,27 @@ st.markdown('<h1 class="main-title">🤖 Spatial Transcriptomics Agent</h1>', un
 st.sidebar.markdown('<div class="provider-section">', unsafe_allow_html=True)
 st.sidebar.title("🎯 Navigation")
 
-PROVIDER_CONFIGS = {
-    "Anthropic": {
-        "icon": "🟣(Recommended)",
-        "color": "#FF5722",
-        "hover_color": "#E64A19"
-    },
-    "OpenAI": {
-        "icon": "🟢",
-        "color": "#2196F3",
-        "hover_color": "#1976D2"
-    }
-}
+# Get provider configurations from factory
+PROVIDER_CONFIGS = ProviderFactory.get_provider_configs()
 
-# Then update the provider selection
-provider_options = [f"{PROVIDER_CONFIGS[p]['icon']} {p}" for p in ["Anthropic", "OpenAI"]]
+# Update the provider selection
+provider_options = [f"{PROVIDER_CONFIGS[p]['icon']} {p}" for p in ProviderFactory.get_available_providers()]
 selected = st.sidebar.radio("Select LLM Provider Family", provider_options)
-page = selected.split(" ")[1]  # Extract provider name without emoji
+page = selected.split(" ")[-1]  # Extract provider name without emoji
 st.session_state["page"] = page
 
-# Set provider-specific functions and variables
-if page == "OpenAI":
-    HISTORY_DIR = "conversation_histories_gpt"
-    invoke_graph = invoke_gpt_graph
-    display_message = display_message_gpt
-    render_conversation_history = render_conversation_history_gpt
-    get_conversation_summary = get_conversation_summary_gpt
-    available_models = ["gpt-4o"]
-else:  # Anthropic
-    HISTORY_DIR = "conversation_histories_anthropic"
-    invoke_graph = invoke_anthropic_graph
-    display_message = display_message_anthropic
-    render_conversation_history = render_conversation_history_anthropic
-    get_conversation_summary = get_conversation_summary_anthropic
-    available_models = [
-        "claude_3_7_sonnet_20250219",
-        "claude_3_5_sonnet_20241022"
-    ]
+# Create provider instance
+current_provider = ProviderFactory.create_provider(page, "dummy_model")  # Model will be set later
+provider_context = ProviderContext(current_provider)
 
-# Add model selection with improved styling
-selected_model = st.sidebar.selectbox(f"🔧 Select {page} Model:", available_models, index=0)
+# Set provider-specific variables
+HISTORY_DIR = current_provider.get_history_dir()
+available_models = current_provider.get_available_models()
+
+# Add model selection with improved styling (default to gpt-5.2 when available)
+default_model = "gpt-5.2"
+default_index = available_models.index(default_model) if default_model in available_models else 0
+selected_model = st.sidebar.selectbox(f"🔧 Select {page} Model:", available_models, index=default_index)
 
 # Add New Chat button with custom styling
 st.sidebar.markdown('<div class="new-chat-button">', unsafe_allow_html=True)
@@ -255,6 +249,9 @@ if st.sidebar.button("🔄 Start New Chat"):
     st.session_state["final_state"] = {
         "messages": [SystemMessage(content=system_prompt)]
     }
+    st.session_state["trace_id"] = make_trace_id()
+    set_current_trace_id(st.session_state["trace_id"])
+    start_conflict_session(st.session_state["trace_id"])
     st.session_state["last_summary_point"] = 0
     st.session_state["last_summary_title"] = "Default Title"
     st.session_state["last_summary_summary"] = "This is the default summary for short conversations."
@@ -262,25 +259,8 @@ if st.sidebar.button("🔄 Start New Chat"):
 st.sidebar.markdown('</div>', unsafe_allow_html=True)
 st.sidebar.markdown('</div>', unsafe_allow_html=True)
 
-# Set up environment for API keys
-if page == "OpenAI" and not os.getenv('OPENAI_API_KEY'):
-    st.sidebar.markdown("""
-        <div class="api-key-setup">
-            <h3>🔑 OpenAI API Key Setup</h3>
-        </div>
-    """, unsafe_allow_html=True)
-    api_key = st.sidebar.text_input(label="OpenAI API Key", type="password", label_visibility="collapsed")
-    os.environ["OPENAI_API_KEY"] = api_key
-    if not api_key:
-        st.info("Please enter your OpenAI API Key in the sidebar.")
-        st.stop()
-elif page == "Anthropic" and not os.getenv('ANTHROPIC_API_KEY'):
-    st.sidebar.header("Anthropic API Key Setup")
-    api_key = st.sidebar.text_input(label="Anthropic API Key", type="password", label_visibility="collapsed")
-    os.environ["ANTHROPIC_API_KEY"] = api_key
-    if not api_key:
-        st.info("Please enter your Anthropic API Key in the sidebar.")
-        st.stop()
+# Set up environment for API keys using provider abstraction
+current_provider.setup_api_key()
 
 os.makedirs(HISTORY_DIR, exist_ok=True)
 
@@ -291,6 +271,7 @@ def save_history(title: str, summary: str):
         "title": title,
         "summary": summary,
         "timestamp": datetime.now().isoformat(),
+        "trace_id": st.session_state.get("trace_id"),
         "messages": messages_to_dicts(st.session_state["final_state"]["messages"])
     }
     filename = f"{HISTORY_DIR}/{title.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -319,6 +300,11 @@ def load_history(filename: str):
         with open(os.path.join(HISTORY_DIR, filename), "r") as f:
             history_data = json.load(f)
             st.session_state["final_state"]["messages"] = dicts_to_messages(history_data["messages"])
+            # Restore trace_id so conflict log follows this conversation (if present)
+            if history_data.get("trace_id"):
+                st.session_state["trace_id"] = history_data["trace_id"]
+                set_current_trace_id(st.session_state["trace_id"])
+                start_conflict_session(st.session_state["trace_id"])
         st.sidebar.success(f"Conversation '{history_data['title']}' loaded successfully")
     except FileNotFoundError:
         st.sidebar.error("Conversation history not found.")
@@ -346,7 +332,13 @@ def dicts_to_messages(dicts):
 
 # Organize Sidebar with Tabs and improved styling
 st.sidebar.title("⚙️ Settings")
-tab1, tab2, tab3 = st.sidebar.tabs(["💬 Conversation", "🎤 Voice", "🖼️ Image"])
+
+# Debug toggle (prints richer logs to terminal)
+if "debug_logs" not in st.session_state:
+    st.session_state["debug_logs"] = False
+st.session_state["debug_logs"] = st.sidebar.checkbox("Enable debug logs", value=st.session_state["debug_logs"])
+
+tab1, tab2, tab3, tab4 = st.sidebar.tabs(["💬 Conversation", "🎤 Voice", "🖼️ Image", "⚠️ Conflicts"])
 
 # Initialize session state variables
 if "last_summary_point" not in st.session_state:
@@ -373,11 +365,14 @@ with tab1:
     # Determine title and summary based on message count and last summary point
     message_count = len(st.session_state["final_state"]["messages"])
     if message_count > 5 and (message_count - 5) % 10 == 0 and message_count != st.session_state["last_summary_point"]:
-        #generated_title, generated_summary = get_conversation_summary(st.session_state["final_state"]["messages"])
-        #st.session_state["last_summary_title"] = generated_title
-        st.session_state["last_summary_title"] = "Default Title"
-        #st.session_state["last_summary_summary"] = generated_summary
-        st.session_state["last_summary_summary"] = "This is the default summary for short conversations."
+        provider_type = page.lower()
+        try:
+            generated_title, generated_summary = get_conversation_summary(st.session_state["final_state"]["messages"], provider_type)
+            st.session_state["last_summary_title"] = generated_title
+            st.session_state["last_summary_summary"] = generated_summary
+        except Exception as e:
+            st.session_state["last_summary_title"] = "Default Title"
+            st.session_state["last_summary_summary"] = "This is the default summary for short conversations."
         st.session_state["last_summary_point"] = message_count
     elif message_count <= 5:
         st.session_state["last_summary_title"] = "Default Title"
@@ -434,8 +429,167 @@ with tab3:
             else:
                 st.session_state["uploaded_images_data"] = []
 
+# Tab 4: Conflict Checking Viewer
+with tab4:
+    st.subheader("Conflict Checking")
+    trace_id = st.session_state.get("trace_id")
+    st.write(f"**trace_id**: `{trace_id}`" if trace_id else "**trace_id**: (missing)")
+
+    if trace_id:
+        start_conflict_session(trace_id)
+        conflict_path = get_conflict_path(trace_id)
+        log = get_conflict_log(trace_id)
+        events = log.get("events", []) if isinstance(log, dict) else []
+
+        st.caption(f"Log file: `{conflict_path}`")
+        st.write(f"**events**: {len(events)}")
+
+        if events:
+            # Aggregate conflicts across events for a quick overview
+            all_conflicts = []
+            for ev in events:
+                res = (ev.get("result") or {})
+                for c in (res.get("conflicts") or []):
+                    all_conflicts.append(c)
+
+            sev_counts = {"high": 0, "medium": 0, "low": 0}
+            for c in all_conflicts:
+                sev = (c.get("severity") or "").lower()
+                if sev in sev_counts:
+                    sev_counts[sev] += 1
+
+            col_a, col_b, col_c, col_d = st.columns(4)
+            col_a.metric("Total conflicts", len(all_conflicts))
+            col_b.metric("High", sev_counts["high"])
+            col_c.metric("Medium", sev_counts["medium"])
+            col_d.metric("Low", sev_counts["low"])
+
+            last = events[-1]
+            last_time = last.get("time", "")
+            last_model = last.get("model", "")
+            last_trigger = last.get("trigger_tool", "")
+            last_summary = ((last.get("result") or {}).get("summary") or "").strip()
+            last_conflicts = ((last.get("result") or {}).get("conflicts") or [])
+            st.markdown("**Latest event**")
+            st.write(f"- **time**: {last_time}")
+            st.write(f"- **model**: {last_model}")
+            st.write(f"- **trigger_tool**: {last_trigger}")
+            if last_summary:
+                st.write(f"- **summary**: {last_summary}")
+            if last_conflicts:
+                st.write(f"- **conflicts**: {len(last_conflicts)}")
+            else:
+                st.write("- **conflicts**: none ✅")
+
+            if last_conflicts:
+                st.markdown("**Latest conflicts (details)**")
+                for c in last_conflicts:
+                    st.write(
+                        f"- **{c.get('severity','?')}** "
+                        f"(conf={c.get('confidence','?')}): {c.get('claim','')}"
+                    )
+                    if c.get("conflict_type") or c.get("conflict_kind"):
+                        st.write(
+                            f"  - **type/kind**: {c.get('conflict_type','?')} / {c.get('conflict_kind','?')}"
+                        )
+                    evs = c.get("evidence") or []
+                    if evs:
+                        st.write("  - **evidence**:")
+                        for e in evs[:5]:
+                            st.write(f"    - {e}")
+                    if c.get("suggested_resolution"):
+                        st.write(f"  - **suggested_resolution**: {c.get('suggested_resolution')}")
+
+            show_all = st.checkbox("Show all events", value=False)
+            show_raw = st.checkbox("Show raw JSON", value=False)
+
+            if show_all:
+                for ev in reversed(events[-20:]):
+                    with st.expander(f"{ev.get('time','')} | {ev.get('trigger_tool','')} | {ev.get('model','')}", expanded=False):
+                        res = ev.get("result") or {}
+                        summary = (res.get("summary") or "").strip()
+                        if summary:
+                            st.write(f"**summary**: {summary}")
+                        conflicts = res.get("conflicts") or []
+                        if conflicts:
+                            st.write("**conflicts**:")
+                            for c in conflicts:
+                                st.write(
+                                    f"- **{c.get('severity','?')}** "
+                                    f"(conf={c.get('confidence','?')}): {c.get('claim','')}"
+                                )
+                                if c.get("suggested_resolution"):
+                                    st.write(f"  - **suggested_resolution**: {c.get('suggested_resolution')}")
+                        else:
+                            st.write("**conflicts**: none")
+                        if show_raw:
+                            st.json(ev)
+
+            st.download_button(
+                "Download conflict log JSON",
+                data=json.dumps(log, ensure_ascii=False, indent=2),
+                file_name=f"conflicts_{trace_id}.json",
+                mime="application/json",
+            )
+        else:
+            st.info("No conflict events yet. After any assistant response > ~80 chars, an event should appear here.")
+    else:
+        st.info("Start a chat to initialize trace_id and conflict logging.")
+
 # Initialize prompt variable
 prompt = st.session_state.get("audio_transcription")
+
+# Helper for debug logging
+def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        try:
+            return json.dumps(content, ensure_ascii=False)
+        except Exception:
+            return str(content)
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text" and "text" in item:
+                parts.append(str(item.get("text", "")))
+            else:
+                try:
+                    parts.append(json.dumps(item, ensure_ascii=False))
+                except Exception:
+                    parts.append(str(item))
+        return "\n".join([p for p in parts if str(p).strip()])
+    return str(content)
+
+def _excerpt(text: str, n: int = 600) -> str:
+    text = (text or "").strip()
+    if len(text) <= n:
+        return text
+    return text[:n] + " ...[truncated]"
+
+
+_SENSITIVE_TEXT_PATTERNS = [
+    (re.compile(r'(?i)\b([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|ACCESS_KEY|PRIVATE_KEY))\b\s*=\s*([^\s#]+)'), r'\1=<redacted>'),
+    (re.compile(r'(?i)("?(?:api_key|token|secret|password|access_key|private_key)"?\s*:\s*")([^"]+)(")'), r'\1<redacted>\3'),
+    (re.compile(r'(?i)\bbearer\s+[A-Za-z0-9._\-]{8,}'), "Bearer <redacted>"),
+    (re.compile(r'(?i)(sk-ant-[A-Za-z0-9\-_]{10,}|sk-[A-Za-z0-9\-_]{10,}|AIza[0-9A-Za-z\-_]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9\-]{10,})'), "<redacted-secret>"),
+    (re.compile(r'://([^/\s:@]+):([^@\s]+)@'), '://<redacted>:<redacted>@'),
+]
+
+
+def _redact_sensitive_text(text: str) -> str:
+    redacted = text or ""
+    for pattern, repl in _SENSITIVE_TEXT_PATTERNS:
+        redacted = pattern.sub(repl, redacted)
+    return redacted
+
+
+def _safe_excerpt(text: str, n: int = 600) -> str:
+    return _excerpt(_redact_sensitive_text(text), n)
 
 # Main chat interface
 st.markdown(f"""
@@ -467,13 +621,40 @@ if prompt:
 
     with st.spinner(f"Agent is thinking..."):
         previous_message_count = len(st.session_state["final_state"]["messages"])
-        updated_state = invoke_graph(st.session_state["final_state"]["messages"], selected_model)
+        if st.session_state.get("debug_logs"):
+            print(
+                f"[STAgent] invoke model={selected_model} msgs={previous_message_count} trace_id={st.session_state.get('trace_id')} at={datetime.now().isoformat()}\n"
+                f"[STAgent] user_excerpt:\n{_safe_excerpt(_content_to_text(user_message.content), 800)}\n"
+            )
+        else:
+            print(f"[STAgent] invoke model={selected_model} msgs={previous_message_count} at={datetime.now().isoformat()}")
+        updated_state = invoke_our_graph(st.session_state["final_state"]["messages"], selected_model)
     
     st.session_state["final_state"] = updated_state
     new_messages = st.session_state["final_state"]["messages"][previous_message_count:]
+
+    if st.session_state.get("debug_logs"):
+        print(f"[STAgent] returned new_messages={len(new_messages)} at={datetime.now().isoformat()}")
+        for i, m in enumerate(new_messages[-8:]):  # keep bounded
+            m_type = m.__class__.__name__
+            m_name = getattr(m, "name", None)
+            tool_calls = getattr(m, "tool_calls", None)
+            header = f"[STAgent] new[{i - min(len(new_messages), 8)}] type={m_type}"
+            if m_name:
+                header += f" name={m_name}"
+            if tool_calls:
+                try:
+                    tool_names = [tc.get("name") for tc in tool_calls if isinstance(tc, dict)]
+                except Exception:
+                    tool_names = ["(unreadable)"]
+                header += f" tool_calls={tool_names}"
+            print(header)
+            print(_safe_excerpt(_content_to_text(getattr(m, "content", "")), 1200))
+            print("---")
     
     if st.session_state.get("render_last_message", True):
-        render_conversation_history([st.session_state["final_state"]["messages"][-1]])
+        # Render everything produced by this invocation (tool outputs + plots + final assistant text)
+        render_conversation_history(new_messages)
     
     if use_voice_response:
         audio_file = convert_text_to_speech(new_messages[-1].content)
@@ -481,6 +662,4 @@ if prompt:
             st.audio(audio_file)
     
     st.session_state["audio_transcription"] = None 
-
-
 
