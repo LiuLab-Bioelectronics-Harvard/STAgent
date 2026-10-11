@@ -87,7 +87,7 @@ export STAGENT_GPU_PYTHON_BIN="conda run -n STAgent_gpusub_test python"
 
 Notes:
 
-- If you also want the optional external workflows for STAligner or Tangram, create the secondary environment, please make sure to check your hardware compatibility about gpu, especially the cuda and torch version. For details, refer to https://pytorch.org/get-started/locally/:
+- Please make sure to check your hardware compatibility about gpu, especially the cuda and torch version. For details, refer to https://pytorch.org/get-started/locally/:
 - PyTorch Geometric or GPU acceleration may still require platform-specific follow-up installation, please refer to https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html, and https://github.com/pyg-team/pytorch_geometric?tab=readme-ov-file.
 
 ## Required and Optional Environment Variables
@@ -143,10 +143,6 @@ Download the .h5ad data files from [Google Drive](https://drive.google.com/drive
 If you use STAgent in your research, please cite:
 > *Lin, Z., *Wang, W., et al. Spatial transcriptomics AI agent charts hPSC-pancreas maturation in vivo. (2025). _bioRxiv_.
 > https://doi.org/10.1101/2025.04.01.646731
-
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 
 ## Acknowledgement
 - STAligner package is a fork from https://github.com/zhoux85/STAligner
