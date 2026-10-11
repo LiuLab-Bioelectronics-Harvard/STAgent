@@ -6,7 +6,7 @@ import re
 import streamlit as st
 from dotenv import load_dotenv
 from uuid import uuid4
-from conflict_log import start_conflict_session, get_log as get_conflict_log, get_conflict_path
+from conflict_log import start_conflict_session, get_log as get_conflict_log, get_conflict_path, snapshot_log, restore_log
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, BaseMessage, SystemMessage
 from providers import ProviderFactory, ProviderContext
 from graph_unified import invoke_our_graph
@@ -236,6 +236,8 @@ provider_context = ProviderContext(current_provider)
 
 # Set provider-specific variables
 HISTORY_DIR = current_provider.get_history_dir()
+HISTORY_STRIP_METADATA = ("model", "model_name", "model_provider")  # removed from saved chat histories
+CONFLICT_SNAPSHOT_DIR = "conflict_logs"  # per-trace conflict log copies saved with chat histories
 available_models = current_provider.get_available_models()
 
 # Add model selection with improved styling (default to gpt-5.2 when available)
@@ -274,6 +276,11 @@ def save_history(title: str, summary: str):
         "trace_id": st.session_state.get("trace_id"),
         "messages": messages_to_dicts(st.session_state["final_state"]["messages"])
     }
+    # Keep a trace-specific copy of the conflict log next to the histories, so conflict results
+    # survive a cleanup of conversation_histories/conflicts/ and are restored on load.
+    trace_id = st.session_state.get("trace_id")
+    snap = snapshot_log(trace_id, os.path.join(HISTORY_DIR, CONFLICT_SNAPSHOT_DIR)) if trace_id else None
+    history_data["conflict_log_file"] = os.path.relpath(snap, HISTORY_DIR) if snap else None
     filename = f"{HISTORY_DIR}/{title.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(filename, "w") as f:
         json.dump(history_data, f)
@@ -304,6 +311,11 @@ def load_history(filename: str):
             if history_data.get("trace_id"):
                 st.session_state["trace_id"] = history_data["trace_id"]
                 set_current_trace_id(st.session_state["trace_id"])
+                snap_rel = history_data.get("conflict_log_file") or os.path.join(
+                    CONFLICT_SNAPSHOT_DIR, f"{history_data['trace_id']}.json")
+                restored = restore_log(st.session_state["trace_id"], os.path.join(HISTORY_DIR, snap_rel))
+                if restored:
+                    st.sidebar.info(f"Restored {restored} conflict-check event(s) from the saved conflict log.")
                 start_conflict_session(st.session_state["trace_id"])
         st.sidebar.success(f"Conversation '{history_data['title']}' loaded successfully")
     except FileNotFoundError:
@@ -317,11 +329,44 @@ def delete_history(filename: str):
 
 # Convert messages to serializable dictionaries and vice versa
 def messages_to_dicts(messages):
-    return [msg.dict() for msg in messages]
+    """Serialize messages; plot artifacts (PNG paths) are also embedded as base64 so the
+    saved history JSON is self-contained."""
+    out = []
+    for msg in messages:
+        d = msg.dict()
+        # Do not record which LLM produced the message.
+        if isinstance(d.get("response_metadata"), dict):
+            d["response_metadata"] = {k: v for k, v in d["response_metadata"].items()
+                                      if k not in HISTORY_STRIP_METADATA}
+        artifacts = d.get("artifact")
+        if d.get("type") == "tool" and isinstance(artifacts, list):
+            images = []
+            for rel_path in artifacts:
+                if isinstance(rel_path, str) and rel_path.endswith(".png"):
+                    abs_path = os.path.join(os.path.dirname(__file__), rel_path)
+                    if os.path.exists(abs_path):
+                        with open(abs_path, "rb") as f:
+                            images.append({
+                                "path": rel_path,
+                                "mime": "image/png",
+                                "base64": base64.b64encode(f.read()).decode("utf-8"),
+                            })
+            if images:
+                d["artifact_images"] = images
+        out.append(d)
+    return out
 
 def dicts_to_messages(dicts):
     reconstructed_messages = []
     for d in dicts:
+        d = dict(d)
+        # Restore embedded plots to disk (if missing) so the UI can display them again.
+        for img in d.pop("artifact_images", None) or []:
+            abs_path = os.path.join(os.path.dirname(__file__), img["path"])
+            if not os.path.exists(abs_path):
+                os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+                with open(abs_path, "wb") as f:
+                    f.write(base64.b64decode(img["base64"]))
         if d["type"] == "ai":
             reconstructed_messages.append(AIMessage(**d))
         elif d["type"] == "human":

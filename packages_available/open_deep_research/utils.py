@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Dict, List, Literal, Optional
@@ -36,6 +37,29 @@ from .state import ResearchComplete, Summary
 ##########################
 # Serp Search Tool Utils
 ##########################
+# Exclude the STAgent paper itself from literature retrieval: citing it as outside support for its
+# own findings (or letting the conflict check treat agreement with it as validation) is circular.
+# Extra titles: STAGENT_SCHOLAR_EXCLUDE_TITLES="title one;title two". Twin of the helper in src/tools.py.
+_SELF_TITLES = ["Spatial transcriptomics AI agent charts hPSC-pancreas maturation in vivo"]
+
+
+def _norm_title(t: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(t or "").lower().replace("\u2026", " ")).strip()
+
+
+def _is_self_publication(title: str) -> bool:
+    nt = _norm_title(title)
+    if not nt:
+        return False
+    if re.search(r"\bstagent\b", nt):
+        return True
+    extra = [t for t in os.getenv("STAGENT_SCHOLAR_EXCLUDE_TITLES", "").split(";") if t.strip()]
+    for ex in map(_norm_title, _SELF_TITLES + extra):
+        # Scholar truncates long titles ("..."), so also accept a long-enough prefix match.
+        if ex in nt or (len(nt) >= 30 and ex.startswith(nt)):
+            return True
+    return False
+
 SERP_SEARCH_DESCRIPTION = (
     "A search engine optimized for comprehensive, accurate, and trusted results. "
     "Useful for omics research, scientific literature, and current events."
@@ -54,11 +78,12 @@ def serp_search(query: str, max_results: int = 5) -> str:
         "api_key": serp_api_key,
         "hl": "en",
         "lr": "lang_en",
-        "num": min(max_results, 40),
+        "num": min(max_results + 2, 40),  # headroom for filtered-out self-publications
     }
     
     search = GoogleSearch(params)
     results = search.get_dict().get("organic_results", [])
+    results = [r for r in results if not _is_self_publication(r.get("title", ""))]
     
     if not results:
         return "No search results found."

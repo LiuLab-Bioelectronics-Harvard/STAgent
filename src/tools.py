@@ -107,6 +107,29 @@ def prepend_external_exec_directives(
     return f"{directives}\n{body}" if body else directives
 
 
+# Exclude the STAgent paper itself from literature retrieval: citing it as outside support for its
+# own findings (or letting the conflict check treat agreement with it as validation) is circular.
+# Extra titles: STAGENT_SCHOLAR_EXCLUDE_TITLES="title one;title two". Twin of the helper in packages_available/open_deep_research/utils.py.
+_SELF_TITLES = ["Spatial transcriptomics AI agent charts hPSC-pancreas maturation in vivo"]
+
+
+def _norm_title(t: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(t or "").lower().replace("\u2026", " ")).strip()
+
+
+def _is_self_publication(title: str) -> bool:
+    nt = _norm_title(title)
+    if not nt:
+        return False
+    if re.search(r"\bstagent\b", nt):
+        return True
+    extra = [t for t in os.getenv("STAGENT_SCHOLAR_EXCLUDE_TITLES", "").split(";") if t.strip()]
+    for ex in map(_norm_title, _SELF_TITLES + extra):
+        # Scholar truncates long titles ("..."), so also accept a long-enough prefix match.
+        if ex in nt or (len(nt) >= 30 and ex.startswith(nt)):
+            return True
+    return False
+
 # Google Scholar Tool
 class GoogleScholarAPI:
     def __init__(self, serp_api_key: str = None, top_k_results: int = 40, hl: str = "en", lr: str = "lang_en"):
@@ -131,6 +154,7 @@ class GoogleScholarAPI:
         }
         search = GoogleSearch(params)
         results = search.get_dict().get("organic_results", [])
+        results = [r for r in results if not _is_self_publication(r.get("title", ""))]
         if not results:
             return "No good Google Scholar Result was found."
         return "\n\n".join([
@@ -427,6 +451,69 @@ class ResearchPlan(BaseModel):
     conflict_queries: List[Dict[str, str]] = Field(default_factory=list, max_items=20)
 
 
+class _DigestLLM(BaseModel):
+    """LLM-facing subset of AnalysisDigest (no free-form Dict fields: strict JSON schema rejects them)."""
+    key_findings: List[str] = Field(default_factory=list)
+    methods_used: List[str] = Field(default_factory=list)
+    claimed_implications: List[str] = Field(default_factory=list)
+
+
+class _ConflictQueryLLM(BaseModel):
+    conflict_id: str
+    query: str
+
+
+class _ResearchPlanLLM(BaseModel):
+    """LLM-facing ResearchPlan (typed items instead of Dict[str, str])."""
+    topic_queries: List[str] = Field(default_factory=list)
+    conflict_queries: List[_ConflictQueryLLM] = Field(default_factory=list)
+
+
+class _ScholarQueriesLLM(BaseModel):
+    queries: List[str] = Field(default_factory=list)
+
+
+_SCHOLAR_STOPWORDS = set("""a an the and or of in on at to for from by with without within across over under into onto do does
+did is are was were be been being this that these those whether how what which when where why than then as
+vs versus rather such its their there here can could may might will would should e g i week weeks""".split())
+_NO_SCHOLAR_RESULTS = "No good Google Scholar Result was found."
+
+
+def _fallback_scholar_keywords(question: str, max_words: int = 8) -> str:
+    """Deterministic keyword query: drop parentheticals, punctuation and stopwords; keep the first words."""
+    q = re.sub(r"\([^)]*\)", " ", str(question))
+    words = [w for w in re.findall(r"[\w\u0370-\u03ff-]+", q) if w.lower() not in _SCHOLAR_STOPWORDS and len(w) > 1 and not w.isdigit()]
+    return " ".join(words[:max_words])
+
+
+def _to_scholar_queries(llm, questions: List[str], dbg: bool = False) -> List[str]:
+    """Google Scholar returns nothing for long research questions (~200 chars), so condense each planned
+    question into a short keyword query (one batched LLM call; deterministic fallback per item)."""
+    out: List[str] = []
+    try:
+        r = _structured_invoke(llm, _ScholarQueriesLLM, [HumanMessage(content=(
+            "Convert each research question into ONE Google Scholar keyword query: 4-8 keywords, no question "
+            "words, no parentheses, no arrows, no gene lists. Return exactly one query per question, same order.\n\n"
+            + "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
+        ))], "scholar_keywords", dbg)
+        out = [str(x).strip() for x in (r.queries or [])]
+    except Exception:
+        out = []
+    return [out[i] if i < len(out) and out[i] else _fallback_scholar_keywords(q) for i, q in enumerate(questions)]
+
+
+def _structured_invoke(llm, schema, messages, label: str, dbg: bool = False):
+    """Structured output with a function-calling fallback; never fails silently."""
+    last_err = None
+    for method in ("json_schema", "function_calling"):
+        try:
+            return llm.with_structured_output(schema, method=method).invoke(messages)
+        except Exception as e:
+            last_err = e
+            print(f"[results_aggregator_tool] {label} failed (method={method}): {e.__class__.__name__}: {str(e)[:300]}")
+    raise last_err
+
+
 class ResearchResult(BaseModel):
     query: str
     conflict_id: str | None = None
@@ -492,13 +579,25 @@ def results_aggregator_tool(
     digest_parts = []
     related_messages: List[Dict[str, object]] = []
 
+    # Per-message text budgets. The agent's own analyses carry the findings (and often start with a
+    # "what is shown" preamble), so they get far more room than tool outputs; code templates are dropped.
+    AI_RECORD_CHARS, AI_DIGEST_CHARS, OTHER_RECORD_CHARS, OTHER_DIGEST_CHARS = 12000, 6000, 2000, 1200
+
+    def _msg_text(m, ai_cap: int, other_cap: int) -> str:
+        role = m.__class__.__name__.replace("Message", "").lower()
+        t = _content_to_text(getattr(m, "content", ""))
+        if role == "tool" and t.lstrip().startswith(("import ", "from ")):
+            return f"[{getattr(m, 'name', 'tool')} returned analysis code; executed by python_repl_tool next]"
+        cap = ai_cap if role == "ai" else other_cap
+        return t[:cap] + ("...[truncated]" if len(t) > cap else "")
+
     def _msg_record(m) -> Dict[str, object]:
         role = m.__class__.__name__.replace("Message", "").lower()
         name = getattr(m, "name", None)
         rec: Dict[str, object] = {
             "role": role,
             "name": name,
-            "content": _content_to_text(getattr(m, "content", ""))[:2000],
+            "content": _msg_text(m, AI_RECORD_CHARS, OTHER_RECORD_CHARS),
         }
         if role == "tool":
             rec["tool"] = getattr(m, "name", None)
@@ -517,7 +616,7 @@ def results_aggregator_tool(
         # Skip internal synthetic messages used for image follow-up prompts
         if getattr(msg, "name", None) in {"image_assistant", "internal_tool_call"}:
             continue
-        digest_parts.append(f"[{role}] {_content_to_text(getattr(msg, 'content', ''))[:1200]}")
+        digest_parts.append(f"[{role}] {_msg_text(msg, AI_DIGEST_CHARS, OTHER_DIGEST_CHARS)}")
         related_messages.append(_msg_record(msg))
     conversation_digest = "\n".join(digest_parts)
     if dbg:
@@ -537,7 +636,6 @@ def results_aggregator_tool(
                 {
                     "event_id": ev.get("event_id"),
                     "time": ev.get("time"),
-                    "model": ev.get("model"),
                     "trigger_tool": ev.get("trigger_tool"),
                     "message_index": ev.get("message_index"),
                     "assistant_excerpt": (ev.get("assistant_excerpt") or "")[:2000],
@@ -615,13 +713,16 @@ def results_aggregator_tool(
     if dbg:
         print("[results_aggregator_tool] extracting analysis_digest via LLM structured output")
     try:
-        analysis_digest = llm.with_structured_output(AnalysisDigest).invoke([HumanMessage(content=digest_prompt)])
-    except Exception:
+        _d = _structured_invoke(llm, _DigestLLM, [HumanMessage(content=digest_prompt)], "analysis_digest", dbg)
         analysis_digest = AnalysisDigest(
-            key_findings=["(failed to extract key findings)"],
-            methods_used=[],
-            claimed_implications=[],
+            key_findings=_d.key_findings[:20],
+            methods_used=_d.methods_used[:50],
+            claimed_implications=_d.claimed_implications[:30],
         )
+    except Exception:
+        # Leave findings EMPTY on failure: a placeholder string here used to become the
+        # deeper-research query ("Background evidence for: (failed to extract key findings)").
+        analysis_digest = AnalysisDigest(key_findings=[], methods_used=[], claimed_implications=[])
     # Always attach the "whole related messages" digest (bounded) regardless of LLM success.
     # Keep digest_text bounded to avoid exploding report_context.json size;
     # the full per-message trace is preserved in related_messages.
@@ -659,10 +760,12 @@ def results_aggregator_tool(
     if dbg:
         print("[results_aggregator_tool] planning research_plan via LLM structured output")
     try:
-        research_plan = llm.with_structured_output(ResearchPlan).invoke([HumanMessage(content=plan_prompt)])
-    except Exception as e:
-        if dbg:
-            print(f"[results_aggregator_tool] research_plan LLM failed: {e}")
+        _p = _structured_invoke(llm, _ResearchPlanLLM, [HumanMessage(content=plan_prompt)], "research_plan", dbg)
+        research_plan = ResearchPlan(
+            topic_queries=_p.topic_queries[:10],
+            conflict_queries=[q.model_dump() for q in _p.conflict_queries][:20],
+        )
+    except Exception:
         research_plan = ResearchPlan(topic_queries=[], conflict_queries=[])
 
     # Trim total queries to max_queries (conflict first, then topic)
@@ -728,6 +831,8 @@ def results_aggregator_tool(
             seed = ""
             if analysis_digest.key_findings:
                 seed = str(analysis_digest.key_findings[0]).strip()
+            if not seed and note:
+                seed = str(note).strip()[:300]
             if not seed:
                 seed = "spatial transcriptomics pancreatic islet graft maturation kidney capsule endocrine mesenchymal interaction"
             planned = [("topic", None, f"Background evidence for: {seed}")]
@@ -742,24 +847,27 @@ def results_aggregator_tool(
     scholar_results: List[Dict[str, str]] = []
     if not skip_scholar:
         max_scholar = min(6, max(0, int(max_queries)))
-        for i, (_kind, _cid, q) in enumerate(planned[:max_scholar]):
-            q_str = str(q).strip()
-            if not q_str:
-                continue
+        questions = [str(q).strip() for (_k, _c, q) in planned[:max_scholar] if str(q).strip()]
+        keyword_queries = _to_scholar_queries(llm, questions, dbg) if questions else []
+        for i, (q_str, kq) in enumerate(zip(questions, keyword_queries)):
             if dbg:
-                print(
-                    f"[results_aggregator_tool] google_scholar_search START {i+1}/{max_scholar}: "
-                    f"chars={len(q_str)} excerpt={_redact_sensitive_text(q_str, 160)}"
-                )
-            try:
-                out = google_scholar.run(q_str)
-            except Exception as e:
-                out = f"Error running Google Scholar search: {e}"
-            out_str = str(out)
+                print(f"[results_aggregator_tool] google_scholar_search START {i+1}/{len(questions)}: query={kq!r}")
+            out_str = ""
+            for attempt in (kq, _fallback_scholar_keywords(kq, max_words=5)):
+                try:
+                    out_str = str(google_scholar.run(attempt))
+                except Exception as e:
+                    out_str = f"Error running Google Scholar search: {e}"
+                kq = attempt
+                if out_str.strip() != _NO_SCHOLAR_RESULTS:
+                    break
+                if dbg:
+                    print(f"[results_aggregator_tool] google_scholar_search no results for {attempt!r}; retrying shorter")
             excerpt = out_str[:6000] + ("\n...[truncated]" if len(out_str) > 6000 else "")
-            scholar_results.append({"query": q_str, "result_excerpt": excerpt})
+            scholar_results.append({"query": q_str, "scholar_query": kq, "result_excerpt": excerpt})
             if dbg:
-                print(f"[results_aggregator_tool] google_scholar_search DONE  {i+1}/{max_scholar} chars={len(out_str)}")
+                print(f"[results_aggregator_tool] google_scholar_search DONE  {i+1}/{len(questions)} "
+                      f"results={out_str.count('Title: ')} chars={len(out_str)}")
 
     # Run deeper research for planned queries
     research_results: List[ResearchResult] = []
@@ -1001,14 +1109,14 @@ if celltype_candidates:
     import matplotlib.pyplot as plt
     from matplotlib import cm
     if n_types <= 10:
-        cmap = cm.get_cmap('tab10')
+        cmap = plt.get_cmap('tab10')
         colors = [cmap(i) for i in range(n_types)]
     elif n_types <= 20:
-        cmap = cm.get_cmap('tab20')
+        cmap = plt.get_cmap('tab20')
         colors = [cmap(i) for i in range(n_types)]
     else:
-        cmap = cm.get_cmap('tab20')
-        cmap_b = cm.get_cmap('tab20b')
+        cmap = plt.get_cmap('tab20')
+        cmap_b = plt.get_cmap('tab20b')
         colors = [cmap(i % 20) if i < 20 else cmap_b((i-20) % 20) for i in range(n_types)]
 
     # Create mapping: cell_type -> RGB tuple
@@ -1906,7 +2014,7 @@ print("Ligand-receptor visualization complete. Plot saved:", fig_path)
 
 
 @tool
-def visualize_spatial_cell_type_map(data_path: str, celltype_col: str, spatial_key: str, output_dir: str, slice_col: str = None) -> str:
+def visualize_spatial_cell_type_map(data_path: str, celltype_col: str, spatial_key: str, output_dir: str, slice_col: str = None, focus_celltypes: List[str] = None) -> str:
     """
     Generates Python code to visualize spatial distribution of cell types across tissue slices.
 
@@ -1934,6 +2042,9 @@ def visualize_spatial_cell_type_map(data_path: str, celltype_col: str, spatial_k
         spatial_key: Name of the obsm key containing spatial coordinates (MUST be confirmed by user)
         output_dir: Directory to save plots (from explore_metadata_tool)
         slice_col: Optional - Name of the obs column for slice/section identifiers (MUST be confirmed by user)
+        focus_celltypes: Optional - cell types to inspect up close (e.g. the endocrine types). Adds, per slice, a
+            zoomed "focus" map cropped to these cells (others drawn faint grey), on a shared magnified scale,
+            so the internal architecture of small multicellular structures (core/periphery, layering) is visible.
 
     Returns:
         Python code string that can be executed via python_repl_tool
@@ -1964,6 +2075,7 @@ os.makedirs(output_dir, exist_ok=True)
 celltype_col = "{celltype_col}"
 spatial_key = "{spatial_key}"
 slice_col = "{slice_col}" if "{slice_col}" != "None" else None
+focus_celltypes = {list(focus_celltypes) if focus_celltypes else None!r}
 
 print(f"Creating spatial cell type maps...")
 print(f"Output directory: {{output_dir}}")
@@ -1985,132 +2097,115 @@ if os.path.exists(metadata_path):
 if spatial_key not in adata.obsm.keys():
     raise ValueError(f"Spatial key '{{spatial_key}}' not found in adata.obsm. Available keys: {{list(adata.obsm.keys())}}")
 
+# ---- One consistent style for ALL panels: same physical scale, same dot size, same colors ----
+from scipy.spatial import cKDTree
+from matplotlib.lines import Line2D
+
+coords_all = np.asarray(adata.obsm[spatial_key])[:, :2]
 if slice_col and slice_col in adata.obs.columns:
-    # Plot spatial distribution for each slice
-    slice_names = sorted(adata.obs[slice_col].unique().tolist())
-    print(f"Creating spatial maps for {{len(slice_names)}} slices...")
-
-    for slice_id in slice_names:
-        adata_slice = adata[adata.obs[slice_col] == slice_id].copy()
-
-        # Calculate dynamic figure size based on spatial extent
-        x_coords = adata_slice.obsm[spatial_key][:, 0]
-        y_coords = adata_slice.obsm[spatial_key][:, 1]
-        x_range = x_coords.max() - x_coords.min()
-        y_range = y_coords.max() - y_coords.min()
-        aspect_ratio = x_range / y_range if y_range > 0 else 1
-        fig_height = 8
-        fig_width = fig_height * aspect_ratio
-
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
-
-        # Get unique cell types in this slice
-        cell_types_in_slice = adata_slice.obs[celltype_col].unique()
-        n_celltypes_slice = len(cell_types_in_slice)
-
-        # Plot each cell type with consistent colors
-        for cell_type in cell_types_in_slice:
-            cells = adata_slice[adata_slice.obs[celltype_col] == cell_type]
-            color = color_mapping.get(cell_type, None) if color_mapping else None
-            ax.scatter(
-                cells.obsm[spatial_key][:, 0],
-                cells.obsm[spatial_key][:, 1],
-                label=cell_type,
-                s=20,
-                alpha=0.8,
-                color=color
-            )
-
-        ax.set_title(f'Spatial Cell Type Distribution - {{slice_id}}')
-        ax.set_xlabel('Spatial X')
-        ax.set_ylabel('Spatial Y')
-
-        # Dynamic legend font size and columns to fit within axes
-        if n_celltypes_slice <= 5:
-            legend_fontsize = 'medium'
-            legend_ncol = 1
-        elif n_celltypes_slice <= 10:
-            legend_fontsize = 'small'
-            legend_ncol = 2
-        elif n_celltypes_slice <= 20:
-            legend_fontsize = 'x-small'
-            legend_ncol = 3
-        elif n_celltypes_slice <= 30:
-            legend_fontsize = 'xx-small'
-            legend_ncol = 4
-        else:
-            legend_fontsize = 'xx-small'
-            legend_ncol = 5
-
-        # Place legend inside axes upper-left with constrained size
-        ax.legend(loc='upper left', fontsize=legend_fontsize, framealpha=0.9,
-                 edgecolor='black', ncol=legend_ncol,
-                 bbox_to_anchor=(0.0, 1.0), borderaxespad=0.5,
-                 columnspacing=1.0, handletextpad=0.5)
-        plt.tight_layout()
-        plt.savefig(os.path.join(output_dir, f'spatial_map_{{slice_id}}.png'), dpi=300, bbox_inches='tight')
-        plt.show()
+    groups = [(sid, np.where((adata.obs[slice_col] == sid).values)[0])
+              for sid in sorted(adata.obs[slice_col].unique().tolist())]
+    print(f"Creating spatial maps for {{len(groups)}} slices...")
 else:
-    # Global spatial plot (no slice grouping)
     print("No slice column provided - showing global spatial map")
+    groups = [("all_cells", np.arange(adata.n_obs))]
 
-    # Calculate dynamic figure size based on spatial extent
-    x_coords = adata.obsm[spatial_key][:, 0]
-    y_coords = adata.obsm[spatial_key][:, 1]
-    x_range = x_coords.max() - x_coords.min()
-    y_range = y_coords.max() - y_coords.min()
-    aspect_ratio = x_range / y_range if y_range > 0 else 1
-    fig_height = 10
-    fig_width = fig_height * aspect_ratio
+# Same units-per-inch on every panel: the largest slice extent maps to MAX_IN inches.
+MAX_IN, MIN_IN = 10.0, 3.0
+max_extent = max(float(np.ptp(coords_all[idx], axis=0).max()) for _, idx in groups) or 1.0
+inch_per_unit = MAX_IN / max_extent
 
-    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+# Dot diameter ~ typical cell spacing (median nearest-neighbour distance), identical for all slices.
+rng = np.random.default_rng(0)
+nn = []
+for _, idx in groups:
+    pts = coords_all[idx]
+    if len(pts) > 1:
+        sub = pts[rng.choice(len(pts), min(5000, len(pts)), replace=False)]
+        d, _ = cKDTree(pts).query(sub, k=2)
+        nn.append(np.median(d[:, 1]))
+cell_spacing = float(np.median(nn)) if nn else max_extent / 100
+MARKER_S = max(0.5, cell_spacing * inch_per_unit * 72 * 0.9) ** 2
+print(f"Shared scale: {{inch_per_unit:.4g}} in/unit | cell spacing {{cell_spacing:.3g}} units | marker s={{MARKER_S:.2f}}")
 
-    # Get unique cell types
-    cell_types = adata.obs[celltype_col].unique()
-    n_celltypes_global = len(cell_types)
+all_types = sorted(adata.obs[celltype_col].astype(str).unique())
+type_color = {{ct: (color_mapping[ct] if ct in color_mapping else plt.get_cmap('tab20')(i % 20))
+              for i, ct in enumerate(all_types)}}
+handles = [Line2D([0], [0], marker='o', ls='', color=type_color[ct], markersize=7, label=ct) for ct in all_types]
 
-    # Plot each cell type with consistent colors
-    for cell_type in cell_types:
-        cells = adata[adata.obs[celltype_col] == cell_type]
-        color = color_mapping.get(cell_type, None) if color_mapping else None
-        ax.scatter(
-            cells.obsm[spatial_key][:, 0],
-            cells.obsm[spatial_key][:, 1],
-            label=cell_type,
-            s=20,
-            alpha=0.8,
-            color=color
-        )
-
-    ax.set_title('Spatial Cell Type Distribution - All Cells')
-    ax.set_xlabel('Spatial X')
-    ax.set_ylabel('Spatial Y')
-
-    # Dynamic legend font size and columns to fit within axes
-    if n_celltypes_global <= 5:
-        legend_fontsize = 'medium'
-        legend_ncol = 1
-    elif n_celltypes_global <= 10:
-        legend_fontsize = 'small'
-        legend_ncol = 2
-    elif n_celltypes_global <= 20:
-        legend_fontsize = 'x-small'
-        legend_ncol = 3
-    elif n_celltypes_global <= 30:
-        legend_fontsize = 'xx-small'
-        legend_ncol = 4
-    else:
-        legend_fontsize = 'xx-small'
-        legend_ncol = 5
-
-    # Place legend inside axes upper-left with constrained size
-    ax.legend(loc='upper left', fontsize=legend_fontsize, framealpha=0.9,
-             edgecolor='black', ncol=legend_ncol,
-             bbox_to_anchor=(0.0, 1.0), borderaxespad=0.5,
-             columnspacing=1.0, handletextpad=0.5)
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'spatial_map_all_cells.png'), dpi=300, bbox_inches='tight')
+for sid, idx in groups:
+    pts = coords_all[idx]
+    labels = adata.obs[celltype_col].astype(str).values[idx]
+    ext = np.ptp(pts, axis=0)
+    w, h = max(MIN_IN, ext[0] * inch_per_unit), max(MIN_IN, ext[1] * inch_per_unit)
+    fig = plt.figure(figsize=(w, h))
+    ax = fig.add_axes([0, 0, 1, 1])  # axes fill the figure so the scale is exact
+    cx, cy = (pts[:, 0].min() + pts[:, 0].max()) / 2, (pts[:, 1].min() + pts[:, 1].max()) / 2
+    ax.set_xlim(cx - w / inch_per_unit / 2, cx + w / inch_per_unit / 2)
+    ax.set_ylim(cy + h / inch_per_unit / 2, cy - h / inch_per_unit / 2)  # image convention: y increases downward
+    order = rng.permutation(len(pts))  # shuffled draw order: no cell type is hidden under another
+    ax.scatter(pts[order, 0], pts[order, 1], s=MARKER_S, c=[type_color[l] for l in labels[order]], linewidths=0)
+    ax.set_xticks([]); ax.set_yticks([])
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_title(f"{{sid}}  (n={{len(pts):,}} cells)", fontsize=11)
+    ax.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small',
+              frameon=False, title=celltype_col)
+    fname = 'spatial_map_all_cells.png' if sid == "all_cells" else f'spatial_map_{{sid}}.png'
+    plt.savefig(os.path.join(output_dir, fname), dpi=300, bbox_inches='tight')
     plt.show()
+
+# ---- Optional zoomed focus tiles: fixed-size windows (same magnified scale for every slice) centred on the
+# densest regions of the focus cell types, so the internal architecture of small structures is visible ----
+if focus_celltypes:
+    TILE_CELLS, TILES_PER_SLICE, TILE_IN = 80, 2, 5.0  # window ~80 cell spacings wide, rendered at 5 in
+    focus = [ct for ct in focus_celltypes if ct in type_color]
+    missing = sorted(set(focus_celltypes) - set(focus))
+    if missing:
+        print(f"Focus cell types not found in {{celltype_col}}: {{missing}}")
+    labels_all = adata.obs[celltype_col].astype(str).values
+    T = TILE_CELLS * cell_spacing
+    t_inch_per_unit = TILE_IN / T
+    T_S = max(0.5, cell_spacing * t_inch_per_unit * 72 * 0.9) ** 2
+    print(f"Focus tiles ({{', '.join(focus)}}): {{TILES_PER_SLICE}}/slice, zoom {{t_inch_per_unit / inch_per_unit:.1f}}x vs full maps, marker s={{T_S:.1f}}")
+    f_handles = [Line2D([0], [0], marker='o', ls='', color=type_color[ct], markersize=7, label=ct) for ct in focus]
+    f_handles.append(Line2D([0], [0], marker='o', ls='', color='0.85', markersize=7, label='other cells'))
+    for sid, idx in groups:
+        pts, labels = coords_all[idx], labels_all[idx]
+        fp_all = pts[np.isin(labels, focus)]
+        if len(fp_all) < 10:
+            continue
+        # Candidate windows on a half-overlapping grid; greedily keep the densest non-overlapping ones.
+        x0s = np.arange(pts[:, 0].min(), max(pts[:, 0].max() - T, pts[:, 0].min()) + T / 2, T / 2)
+        y0s = np.arange(pts[:, 1].min(), max(pts[:, 1].max() - T, pts[:, 1].min()) + T / 2, T / 2)
+        cands = [((fp_all[:, 0] >= x) & (fp_all[:, 0] < x + T) & (fp_all[:, 1] >= y) & (fp_all[:, 1] < y + T)).sum()
+                 for x in x0s for y in y0s]
+        cands = sorted(zip(cands, [(x, y) for x in x0s for y in y0s]), reverse=True)
+        chosen = []
+        for n, (x, y) in cands:
+            if n < 10 or len(chosen) >= TILES_PER_SLICE:
+                break
+            if all(abs(x - cx) >= T or abs(y - cy) >= T for cx, cy in chosen):
+                chosen.append((x, y))
+        for k, (x, y) in enumerate(chosen, 1):
+            inbox = (pts[:, 0] >= x) & (pts[:, 0] < x + T) & (pts[:, 1] >= y) & (pts[:, 1] < y + T)
+            tp, tl = pts[inbox], labels[inbox]
+            is_f = np.isin(tl, focus)
+            fig = plt.figure(figsize=(TILE_IN, TILE_IN))
+            ax = fig.add_axes([0, 0, 1, 1])
+            ax.set_xlim(x, x + T); ax.set_ylim(y + T, y)  # image convention, same as full maps
+            ax.scatter(tp[~is_f, 0], tp[~is_f, 1], s=T_S, c='0.85', linewidths=0)
+            order = rng.permutation(int(is_f.sum()))
+            fp, fl = tp[is_f][order], tl[is_f][order]
+            ax.scatter(fp[:, 0], fp[:, 1], s=T_S, c=[type_color[l] for l in fl], linewidths=0)
+            ax.set_xticks([]); ax.set_yticks([])
+            for sp in ax.spines.values():
+                sp.set_visible(False)
+            ax.set_title(f"{{sid}} - zoom {{k}}/{{len(chosen)}} ({{int(is_f.sum()):,}} focus cells)", fontsize=11)
+            ax.legend(handles=f_handles, loc='upper left', bbox_to_anchor=(1.01, 1.0), fontsize='small', frameon=False)
+            fname = f'spatial_focus_{{sid}}_zoom{{k}}.png'
+            plt.savefig(os.path.join(output_dir, fname), dpi=300, bbox_inches='tight')
+            plt.show()
 
 print(f"Spatial cell type visualization complete! Plots saved to {{output_dir}}")
 
@@ -2202,12 +2297,12 @@ if sample_col and sample_col in adata.obs.columns:
     ) * 100  # Convert to percentages
 
     # Stacked bar plot with consistent colors
-    plt.figure(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
     if color_mapping:
         color_list = [color_mapping.get(ct, None) for ct in composition_df.columns]
-        composition_df.plot(kind='bar', stacked=True, color=color_list)
+        composition_df.plot(kind='bar', stacked=True, color=color_list, ax=ax)
     else:
-        composition_df.plot(kind='bar', stacked=True)
+        composition_df.plot(kind='bar', stacked=True, ax=ax)
     plt.title('Cell Type Composition Across Samples')
     plt.xlabel('Sample')
     plt.ylabel('Percentage of Cells')
@@ -2222,7 +2317,9 @@ if sample_col and sample_col in adata.obs.columns:
     print(composition_df.round(2))
 
     # Heatmap
-    plt.figure(figsize=(10, 6))
+    # Size from data shape so long rotated labels never squash the heatmap
+    n_rows, n_cols = composition_df.shape
+    plt.figure(figsize=(max(8, 0.9 * n_cols + 2), max(4, 0.6 * n_rows + 3.5)))
     sns.heatmap(composition_df, annot=True, fmt='.1f', cmap='YlOrRd')
     plt.title('Cell Type Composition Heatmap')
     plt.ylabel('Sample')
@@ -2235,12 +2332,12 @@ else:
     print("No sample column provided - showing global cell type composition")
     composition_series = adata.obs[celltype_col].value_counts(normalize=True) * 100
 
-    plt.figure(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 6))
     if color_mapping:
         color_list = [color_mapping.get(ct, None) for ct in composition_series.index]
-        composition_series.plot(kind='bar', color=color_list)
+        composition_series.plot(kind='bar', color=color_list, ax=ax)
     else:
-        composition_series.plot(kind='bar')
+        composition_series.plot(kind='bar', ax=ax)
     plt.title('Global Cell Type Composition')
     plt.xlabel('Cell Type')
     plt.ylabel('Percentage of Cells')
@@ -2936,6 +3033,45 @@ _log("Tangram gene imputation finished.")
     )
 
 
+
+def _compact_trace_for_report(related_messages: List[Dict[str, object]], budget: int) -> str:
+    """Bound the trace for the report prompt WITHOUT dropping its end.
+
+    Cutting the JSON at a fixed length silently removed every later analysis (e.g. spatial maps and
+    neighborhood enrichment). Instead: drop code (templates and executed code), keep every message,
+    and shrink the per-message text cap evenly until the whole trace fits the budget.
+    """
+    rows = []
+    for r in related_messages or []:
+        r = dict(r)
+        role, tool_name = str(r.get("role") or ""), str(r.get("tool") or r.get("name") or "")
+        content = str(r.get("content") or "")
+        if role == "tool" and content.lstrip().startswith(("import ", "from ")):
+            content = f"[{tool_name} returned analysis code; it was executed by python_repl_tool in the next step]"
+        row = {"role": role, "content": content}
+        if role == "tool":
+            row["tool"] = tool_name
+            if r.get("artifacts"):
+                row["plots"] = str(r.get("artifacts")).count(".png")
+        if r.get("tool_calls"):
+            row["calls"] = re.findall(r"'name': '([A-Za-z0-9_]+)'", str(r.get("tool_calls")))
+        rows.append(row)
+
+    def _render(cap: int) -> str:
+        out = []
+        for row in rows:
+            c = row["content"]
+            out.append({**row, "content": c if len(c) <= cap else c[:cap] + " ...[truncated]"})
+        return json.dumps(out, ensure_ascii=False, indent=1)
+
+    cap = max((len(r["content"]) for r in rows), default=0)
+    text = _render(cap)
+    while len(text) > budget and cap > 300:
+        cap = int(cap * 0.8)
+        text = _render(cap)
+    return text
+
+
 @tool
 def report_tool(context_path: str, query: str = "", debug: bool | None = True) -> str:
     """
@@ -3008,18 +3144,21 @@ def report_tool(context_path: str, query: str = "", debug: bool | None = True) -
     # instead of a giant concatenated digest which can blow up prompt size.
     trace_messages_text = ""
     try:
-        trace_messages_text = json.dumps(ctx.analysis_digest.related_messages, ensure_ascii=False, indent=2)
-    except Exception:
+        trace_messages_text = _compact_trace_for_report(ctx.analysis_digest.related_messages, budget=50000)
+    except Exception as e:
+        print(f"[report_tool] trace compaction failed: {e}")
         trace_messages_text = ""
-    if len(trace_messages_text) > 50000:
-        trace_messages_text = trace_messages_text[:50000] + "\n...[truncated]"
-        if dbg:
-            print("[report_tool] trace_messages_text truncated to 50k chars for prompt")
+    if dbg:
+        print(f"[report_tool] trace_messages_text chars={len(trace_messages_text)} "
+              f"(all {len(ctx.analysis_digest.related_messages)} messages kept, code omitted)")
+    key_findings_text = "\n".join(f"- {k}" for k in (ctx.analysis_digest.key_findings or [])) or "(none extracted)"
+    implications_text = "\n".join(f"- {k}" for k in (ctx.analysis_digest.claimed_implications or [])) or "(none extracted)"
+    methods_text = "\n".join(f"- {k}" for k in (ctx.analysis_digest.methods_used or [])) or "(none extracted)"
 
     # Keep a smaller digest_text as a fallback summary (optional).
     digest_text = (ctx.analysis_digest.digest_text or "")
     if len(digest_text) > 20000:
-        digest_text = digest_text[:20000] + "\n...[truncated]"
+        digest_text = digest_text[:10000] + "\n...[middle truncated]...\n" + digest_text[-10000:]
         if dbg:
             print("[report_tool] digest_text truncated to 20k chars for prompt")
 
@@ -3203,7 +3342,18 @@ Tone and focus requirements:
 
 SESSION_ID: {ctx.meta.session_id}
 
-TRACE_MESSAGES_JSON (bounded; full trace, images omitted):
+KEY_FINDINGS (extracted from the full analysis trace; the Results section MUST cover EVERY item,
+including spatial-organization and neighborhood findings; do not claim an analysis is missing if it appears here
+or in the trace):
+{key_findings_text}
+
+ANALYSES_PERFORMED:
+{methods_text}
+
+CLAIMED_IMPLICATIONS (hypotheses to discuss, not established facts):
+{implications_text}
+
+TRACE_MESSAGES_JSON (every message kept, code omitted, long texts shortened evenly; images omitted):
 {trace_messages_text}
 
 TRACE_DIGEST_TEXT (smaller bounded fallback):
@@ -3348,7 +3498,7 @@ If evidence is missing, explicitly label it as a limitation instead of guessing.
                 print("[report_tool] WARNING: empty report content returned; (repr unavailable)")
             print("[report_tool] retrying once with reduced context")
 
-        reduced_trace = trace_messages_text[:20000] + ("\n...[truncated]" if len(trace_messages_text) > 20000 else "")
+        reduced_trace = _compact_trace_for_report(ctx.analysis_digest.related_messages, budget=20000)
         reduced_research_files = research_files_text[:8000] + ("\n...[truncated]" if len(research_files_text) > 8000 else "")
         reduced_scholar = scholar_text[:6000] + ("\n...[truncated]" if len(scholar_text) > 6000 else "")
         reduced_prompt = report_prompt

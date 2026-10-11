@@ -67,18 +67,9 @@ class AppConfig:
                         "parallel_tool_calls": False
                     },
                     "gpt-5": {
-                        "temperature": 1,
+                        "temperature": 0,
                         "parallel_tool_calls": False
-                    }, 
-                    "gpt-5.1-2025-11-13": {
-                        "temperature": 1,
-                        "parallel_tool_calls": False
-                    }, 
-                    "gpt-5.2": {
-                        "temperature": 1,
-                        "parallel_tool_calls": False
-                    }, 
-                    
+                    }
                 },
                 "anthropic": {
                     "claude-sonnet-4-20250514": {
@@ -198,7 +189,7 @@ class ToolConfig:
     
     # Visualization settings
     default_figure_size: tuple = (10, 6)
-    default_dpi: int = 100
+    default_dpi: int = 200  # captured plots are what the vision model inspects; 100 dpi hid fine spatial structure
     save_format: str = "png"
     bbox_inches: str = "tight"
     

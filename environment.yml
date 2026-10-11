@@ -45,3 +45,4 @@ dependencies:
       - audio-recorder-streamlit>=0.0.10
       - streamlit-audiorec>=0.1.3
       - pytest>=8.0
+      - setuptools

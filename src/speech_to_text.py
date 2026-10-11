@@ -26,7 +26,8 @@ def convert_audio_to_text(audio_bytes: bytes) -> Optional[str]:
     try:
         # Initialize OpenAI client
         client = OpenAI(
-            api_key=os.getenv("WHISPER_API_KEY")
+            api_key=os.getenv("WHISPER_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL"),
         )
         
         # Create a temporary file to store the audio bytes
@@ -97,7 +98,8 @@ def convert_text_to_speech(text: str, filename: str = "response.wav") -> Optiona
     try:
         # Initialize OpenAI client
         client = OpenAI(
-            api_key=os.getenv("OPENAI_API_KEY")
+            api_key=os.getenv("OPENAI_API_KEY"),
+            base_url=os.getenv("OPENAI_API_BASE") or os.getenv("OPENAI_BASE_URL"),
         )
         
         # Show spinner while processing

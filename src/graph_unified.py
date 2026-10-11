@@ -139,6 +139,11 @@ def _make_session_id() -> str:
     return f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:10]}"
 
 
+def _auto_scholar_enabled() -> bool:
+    """Auto Google Scholar grounding after each plot analysis (STAGENT_AUTO_SCHOLAR=0 disables, e.g. for ablations)."""
+    return os.getenv("STAGENT_AUTO_SCHOLAR", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def _resolve_session_id(config: RunnableConfig) -> str:
     """
     Resolve a session_id/trace_id for logging.
@@ -244,15 +249,33 @@ def python_repl_tool(query: str) -> Tuple[str, List[str]]:
                 "Plot artifacts are not auto-captured in this mode."
             )
         else:
-            output = python_repl.run(query)
+            # The model often adds plt.close() after savefig, which leaves nothing to capture
+            # (so plots are never shown or fed back for analysis). Neutralize it during the run;
+            # all figures are closed below after capture.
+            _orig_plt_close = plt.close
+            plt.close = lambda *a, **k: None
+            try:
+                output = python_repl.run(query)
+            finally:
+                plt.close = _orig_plt_close
             if output and output.strip():
                 result_parts.append(output.strip())
-            
+
             figures = [plt.figure(i) for i in plt.get_fignums()]
             if figures:
                 tool_config = get_tool_config()
-                for fig in figures:
-                    fig.set_size_inches(*tool_config.default_figure_size)
+                squashed = []
+                for k, fig in enumerate(figures, 1):
+                    # Do NOT force a figure size here: resizing after the layout was computed
+                    # distorts plots. Instead, flag degenerate (squashed) axes so the agent fixes them.
+                    w_in, h_in = fig.get_size_inches()
+                    for ax in fig.axes:
+                        if ax.get_label() == "<colorbar>" or not ax.axison:
+                            continue
+                        bb = ax.get_position()
+                        if bb.height * h_in < 1.0 or bb.width * w_in < 1.0 or bb.height < 0.15:
+                            squashed.append(k)
+                            break
                     plot_filename = f"plot_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.{tool_config.save_format}"
                     # Create relative path
                     rel_path = os.path.join("tmp/plots", plot_filename)
@@ -264,6 +287,13 @@ def python_repl_tool(query: str) -> Tuple[str, List[str]]:
                 
                 plt.close("all")
                 result_parts.append(f"Generated {len(plot_paths)} plot(s).")
+                if squashed:
+                    result_parts.append(
+                        f"WARNING: plot(s) #{sorted(set(squashed))} have a squashed/degenerate axes area "
+                        "(figure too small for its labels). Re-run with a larger figsize "
+                        "(e.g. width ~0.9in per column, height ~0.6in per row plus ~3in for long rotated labels), "
+                        "then re-inspect before interpreting."
+                    )
         
         if not result_parts:  # If no output and no figures
             result_parts.append("Executed code successfully with no output. If you want to see the output of a value, you should print it out with `print(...)`.")
@@ -519,7 +549,8 @@ class UnifiedLLMGraph:
                 "assistant_text": assistant_text,
                 "literature_text": literature_text,
             })
-        except Exception:
+        except Exception as e:
+            print(f"[STAgent][graph] conflict check failed ({trigger_tool}): {e.__class__.__name__}: {e}")
             return None
 
         # Safety normalization: keep conflict_type consistent with evidence + lit availability.
@@ -554,7 +585,6 @@ class UnifiedLLMGraph:
         event = {
             "event_id": f"evt_{datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')}",
             "time": datetime.utcnow().isoformat(),
-            "model": model_name,
             "trigger_tool": trigger_tool,
             "message_index": message_index,
             "assistant_excerpt": assistant_text[:400],
@@ -564,6 +594,59 @@ class UnifiedLLMGraph:
         conflict_append_event(session_id, event)
         return result
     
+    def _make_scholar_query(self, llm, analysis_text: str) -> str:
+        """Turn a plot analysis into one concise, biology-focused Google Scholar query."""
+        try:
+            resp = llm.invoke([HumanMessage(content=(
+                "Write ONE Google Scholar search query (max 12 words, no quotes, no tool/software names) "
+                "targeting the most important BIOLOGICAL observation in this analysis, so that published "
+                "evidence can support or contradict it. Output only the query.\n\n"
+                f"ANALYSIS:\n{analysis_text[:4000]}"
+            ))])
+            q = self._content_to_text(getattr(resp, "content", "")).strip().splitlines()
+            return (q[0] if q else "").strip().strip('"').strip()[:200]
+        except Exception as e:
+            print(f"[STAgent][graph] scholar query generation failed: {e.__class__.__name__}: {e}")
+            return ""
+
+    def _conflict_check_after_literature(self, msgs, response, model_name: str, config) -> None:
+        """Conflict-check (preceding plot analysis + literature-grounded explanation) against the search results."""
+        try:
+            literature_text = f"[google_scholar_search] {self._content_to_text(msgs[-1].content)[:5000]}"
+            analysis = ""
+            for m in reversed(msgs[:-1]):
+                if isinstance(m, AIMessage) and not getattr(m, "tool_calls", None):
+                    analysis = self._content_to_text(m.content)
+                    break
+            explanation = self._content_to_text(getattr(response, "content", ""))
+            self._run_conflict_check(
+                session_id=_resolve_session_id(config),
+                model_name=model_name,
+                trigger_tool="google_scholar_search",
+                assistant_text=(analysis[:3000] + "\n\n" + explanation).strip(),
+                literature_text=literature_text,
+                message_index=len(msgs),
+            )
+        except Exception as e:
+            print(f"[STAgent][graph] conflict check after literature failed: {e.__class__.__name__}: {e}")
+
+    @staticmethod
+    def _describe_tool_calls(tool_calls) -> str:
+        """Deterministic one-line narration of what is about to run."""
+        lines = []
+        for tc in tool_calls or []:
+            name = tc.get("name", "tool")
+            args = tc.get("args") or {}
+            if name == "python_repl_tool":
+                code = str(args.get("query", ""))
+                comments = [l.strip("# ").strip() for l in code.splitlines() if l.strip().startswith("#") and len(l.strip()) > 3]
+                what = f" — {comments[0]}" if comments else ""
+                lines.append(f"▶️ Executing generated code with `python_repl_tool` ({len(code.splitlines())} lines){what}.")
+            else:
+                shown = ", ".join(f"{k}={str(v)[:60]}" for k, v in args.items() if k not in ("state",))
+                lines.append(f"▶️ Running `{name}`" + (f" ({shown})" if shown else "") + ".")
+        return "\n".join(lines)
+
     def _get_provider_type(self, model_name: str) -> str:
         """Determine provider type from model name."""
         if model_name in self.openai_models:
@@ -643,13 +726,10 @@ class UnifiedLLMGraph:
         last_idx = len(state["messages"]) - 1
         last_tool_name = getattr(last_message, "name", "") if isinstance(last_message, ToolMessage) else ""
         has_artifacts = bool(getattr(last_message, "artifact", None)) if isinstance(last_message, ToolMessage) else False
-        is_plot_tool = last_tool_name in {
-            "python_repl_tool",
-            "visualize_umap",
-            "visualize_cell_type_composition",
-            "visualize_spatial_cell_type_map",
-            "visualize_cell_cell_interaction_tool",
-        }
+        # visualize_* tools only RETURN code; it must be executed by python_repl_tool first.
+        # Treating them as plot tools forced a tool-less "analysis" turn on code text,
+        # so the model never ran the code and invented the outputs.
+        is_plot_tool = last_tool_name in {"python_repl_tool"}
         should_post_tool_flow = isinstance(last_message, ToolMessage) and (has_artifacts or is_plot_tool)
 
         if has_artifacts:
@@ -671,6 +751,10 @@ class UnifiedLLMGraph:
       - A concise description of what is shown
       - Key observations and patterns
       - Biological interpretation grounded in the plots and the tool output
+      - For SPATIAL MAPS: go beyond compartment-level patterns. Inspect individual multicellular clusters and
+        describe their internal architecture: which cell types form the core vs the periphery/mantle, layering,
+        mixing vs segregation, shape (compact vs elongated/strand-like). Compare this architecture explicitly
+        across timepoints/conditions (early vs late), citing specific slices.
     </task>
     <constraints>
       - Do not assume external web search is required unless the user asks.
@@ -698,7 +782,7 @@ class UnifiedLLMGraph:
                                 image_data = base64.b64encode(image_file.read()).decode("utf-8")
                             content_list.append({
                                 "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{image_data}"}
+                                "image_url": {"url": f"data:image/png;base64,{image_data}", "detail": "high"}
                             })
             
             # Always create a follow-up instruction message when artifacts exist:
@@ -709,7 +793,15 @@ class UnifiedLLMGraph:
 
         if should_post_tool_flow:
             # Analysis on plots/tool output (no tools). Then continue the graph so the agent can decide next steps.
-            messages_for_analysis = state["messages"] + [image_message] if has_artifacts else state["messages"]
+            if not has_artifacts:
+                # Text-only execution: still report what ran and what came out.
+                image_message = HumanMessage(name="image_assistant", content=(
+                    "Report on the execution that just finished, in 3-6 bullets: what was run and why, "
+                    "the key outputs/numbers (files written, counts, statistics), and whether it succeeded "
+                    "(if it failed: the cause and the fix). DO NOT call any tools. "
+                    "End with an explicit \"Next step\" (one action)."
+                ))
+            messages_for_analysis = state["messages"] + [image_message]
             plain = self.all_models_plain.get(model_name) or llm
             try:
                 analysis_response = plain.invoke(messages_for_analysis)
@@ -727,16 +819,54 @@ class UnifiedLLMGraph:
             # Avoid noisy duplicated headers like "Step 1 — Analysis" and keep the UI clean.
             analysis_text = (analysis_text or "").strip()
             analysis_text = re.sub(r"^(?:Step\\s*1\\s*[—-]\\s*Analysis\\s*)+", "", analysis_text, flags=re.IGNORECASE).strip()
+            if not analysis_text:
+                # Guarantee a real analysis: retry once if the model returned nothing.
+                try:
+                    retry = plain.invoke(messages_for_analysis)
+                    analysis_text = self._content_to_text(getattr(retry, "content", "")).strip()
+                except Exception:
+                    pass
             analysis_response = AIMessage(content=analysis_text or "Analysis complete.")
 
             try:
                 ss["render_last_message"] = True
             except Exception:
                 pass
+
+            # After a plot analysis, deterministically ground it in literature: the prompt asks the
+            # model to call google_scholar_search, but the analysis turn is tool-less, so it never did.
+            if has_artifacts and analysis_text and _auto_scholar_enabled():
+                query = self._make_scholar_query(plain, analysis_text)
+                if query:
+                    auto_call = AIMessage(
+                        content=f"🔎 Searching Google Scholar to ground these observations: \"{query}\"",
+                        name="auto_literature_search",
+                        tool_calls=[{
+                            "name": "google_scholar_search",
+                            "args": {"query": query},
+                            "id": f"call_auto_{uuid4().hex[:16]}",
+                            "type": "tool_call",
+                        }],
+                    )
+                    return Command(update={"messages": [analysis_response, auto_call]}, goto="tools")
             return Command(update={"messages": [analysis_response]}, goto="modelNode")
         
         # Invoke the model (include any extra messages we injected)
         messages_for_model = state["messages"]
+        after_scholar = isinstance(last_message, ToolMessage) and last_tool_name == "google_scholar_search"
+        if after_scholar:
+            # Transient instruction (not stored in state): turn the search into a grounded explanation.
+            messages_for_model = messages_for_model + [HumanMessage(
+                name="image_assistant",
+                content=(
+                    "Using the Google Scholar results above, write:\n"
+                    "1) **Literature** (2-4 bullets; cite author/title from the results only).\n"
+                    "2) **Explanation**: reconcile the preceding observations with the literature - "
+                    "say explicitly where they AGREE and where they DISAGREE or are not supported.\n"
+                    "If the search failed or returned nothing relevant, say \"No literature search available\". "
+                    "Then continue with the next analysis step if one is planned."
+                ),
+            )]
         try:
             response = llm.invoke(messages_for_model)
         except Exception as e:
@@ -750,9 +880,17 @@ class UnifiedLLMGraph:
                 )
             )
             return Command(update={"messages": [friendly]}, goto="__end__")
-        
+
+        if after_scholar:
+            # Conflict-check the literature-grounded explanation right away (the end-of-turn
+            # conflictNode only sees the final message, which is often a plan or a question).
+            self._conflict_check_after_literature(state["messages"], response, model_name, config)
+
         # Determine next step based on response
         if response.tool_calls:
+            # Tell the user what is about to run when the model gives no narration.
+            if isinstance(response.content, str) and not response.content.strip():
+                response.content = self._describe_tool_calls(response.tool_calls)
             # Safety gate: never run ligand-receptor tool without explicit user confirmation.
             try:
                 tool_names = [tc.get("name") for tc in (response.tool_calls or []) if isinstance(tc, dict)]

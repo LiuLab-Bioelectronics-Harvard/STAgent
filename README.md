@@ -62,7 +62,7 @@ Brings together analysis results into a coherent biological story that can suppo
 Run all commands from the package root:
 
 ```bash
-cd STAgent_clean
+cd STAgent
 ```
 
 Create the main application environment:
@@ -138,9 +138,6 @@ Download the .h5ad data files from [Google Drive](https://drive.google.com/drive
 - Deeper-research outputs are saved under `research_reports/`.
 - Final reports are saved under `output_report/`.
 
-## Demo
-
-Check out our [demo video](https://www.youtube.com/watch?v=aEUop05RINY&t=2s) to see STAgent in action.
 
 ## Citation
 If you use STAgent in your research, please cite:
